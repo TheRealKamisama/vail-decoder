@@ -284,6 +284,7 @@ int sta_commit(Sta *s, const Element *source, int n, Element **out)   /* 05 §8.
 {
     int i, m;
     Element *res;
+    if (n < 0) n = 0;
     if (s->learningPhase) {
         if (s->pendingCount + n > s->pendingCap) {
             int cap = (s->pendingCount + n) * 2 + 64;

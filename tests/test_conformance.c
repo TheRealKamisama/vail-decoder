@@ -224,6 +224,128 @@ static void test_api(void)
     }
 }
 
+/* ---- weak-signal extensions (not in 13-conformance): likelihood ENV, SPD, CVD */
+
+static unsigned long long trng = 0x9E3779B97F4A7C15ULL;
+static double t_urand(void) { trng ^= trng << 13; trng ^= trng >> 7; trng ^= trng << 17; return ((trng >> 11) + 0.5) * (1.0 / 9007199254740992.0); }
+static double t_exp(void) { return -log(t_urand()); }
+
+static void test_lik(void)
+{
+    double s;
+    /* the LLR rises with the power, is negative at the noise mean and positive at the key-down mean */
+    for (s = 0.5; s < 200.0; s *= 2.0) {
+        CHECK(lik_llr(1.0, s) < 0.0, "llr(noise mean, s=%g) %g not < 0", s, lik_llr(1.0, s));
+        CHECK(lik_llr(1.0 + s, s) > 0.0, "llr(key-down mean, s=%g) %g not > 0", s, lik_llr(1.0 + s, s));
+        CHECK(lik_llr(2.0, s) > lik_llr(1.0, s), "llr not increasing (s=%g)", s);
+    }
+    CHECK(NEAR(lik_llr(0.0, 3.0), -3.0, 1e-9), "llr(0, s) = -s");
+    {   /* flat spectrum: both side levels are the level itself */
+        float sp[N_BINS], l, r, b;
+        int i;
+        for (i = 0; i < N_BINS; i++) sp[i] = 2.0f;
+        spm_noise_sides(sp, 60, &l, &r, &b);
+        CHECK(NEAR(l, 2.0, 1e-6) && NEAR(r, 2.0, 1e-6), "side levels %g %g want 2", l, r);
+        spm_noise_sides(sp, 2, &l, &r, &b);          /* near the edge one side copies the other */
+        CHECK(NEAR(l, 2.0, 1e-6) && NEAR(r, 2.0, 1e-6), "edge side levels %g %g want 2", l, r);
+    }
+    {   /* exponential noise: no carrier; a keyed tone 13 dB above it: carrier, and the key-down frames
+         * (36 frames earlier) carry positive log-odds, the key-up frames negative */
+        Env e;
+        float sp[N_BINS], l, r, b;
+        int f, i, c = 60, pos = 0, neg = 0, onFrames = 0, offFrames = 0, carrier = 0;
+        env_init(&e);
+        for (f = 0; f < 1200; f++) {
+            int key = f >= 600 && (f / 8) % 2 == 0;       /* 8 frames on, 8 off */
+            for (i = 0; i < N_BINS; i++) sp[i] = (float)t_exp();
+            if (key) sp[c] = (float)(t_exp() + 20.0);
+            spm_noise_sides(sp, c, &l, &r, &b);
+            {
+                float beside[2 * LIK_PEAK_SPAN];
+                int k, n = 0;
+                for (k = -LIK_PEAK_SPAN; k <= LIK_PEAK_SPAN; k++) if (k) beside[n++] = sp[c + k];
+                env_apply_lik(&e, sp[c], beside, l, r, b, 1e-10f);
+            }
+            if (f == 599) CHECK(!e.envCarrier, "carrier on in noise (SNR estimate %g)", e.envSnr);
+            if (f >= 800) {
+                int was = ((f - LIK_DELAY) / 8) % 2 == 0, mid = (f - LIK_DELAY) % 8;
+                carrier += e.envCarrier;
+                if (mid >= 2 && mid <= 5) {
+                    if (was) { onFrames++; pos += e.envObs.keyLogOdds > 0.0f; }
+                    else { offFrames++; neg += e.envObs.keyLogOdds < 0.0f; }
+                }
+            }
+        }
+        CHECK(carrier == 400, "carrier on %d of 400 keyed frames", carrier);
+        CHECK(pos >= onFrames * 95 / 100, "key-down frames with positive log-odds: %d of %d", pos, onFrames);
+        CHECK(neg >= offFrames * 95 / 100, "key-up frames with negative log-odds: %d of %d", neg, offFrames);
+        CHECK(e.envSnr > 12.0f && e.envSnr < 26.0f, "SNR estimate %g want about 20", e.envSnr);
+        env_free(&e);
+    }
+}
+
+/* frames of clean keying of text at wpm, as SEG input; returns the frame count */
+static int keyed_obs(const char *text, double wpm, SegObs *o, int max)
+{
+    double u = 112.94 / wpm, t = 0.0;
+    int n = 0, k;
+    const char *p;
+    for (p = text; *p; p++) {
+        const char *code = NULL;
+        if (*p == ' ') { t += 4.0 * u; continue; }
+        for (k = 0; k < chr_table_size(); k++)
+            if (chr_table_out(k)[0] == *p && !chr_table_out(k)[1]) { code = chr_table_pattern(k); break; }
+        for (; code && *code; code++) {
+            double on = (*code == '.' ? 1.0 : 3.0) * u;
+            int a = (int)(t + 0.5), b = (int)(t + on + 0.5), g = (int)(t + on + u + 0.5);
+            for (; n < a && n < max; n++) { o[n].keyLogOdds = -8.0f; o[n].riseLogOdds = -8.0f; o[n].fallLogOdds = 0.0f; }
+            for (; n < b && n < max; n++) { o[n].keyLogOdds = 8.0f; o[n].riseLogOdds = 8.0f; o[n].fallLogOdds = 0.0f; }
+            for (; n < g && n < max; n++) { o[n].keyLogOdds = -8.0f; o[n].riseLogOdds = -8.0f; o[n].fallLogOdds = 0.0f; }
+            t += on + u;
+        }
+        t += 2.0 * u;
+    }
+    for (k = 0; k < 300 && n < max; k++, n++) { o[n].keyLogOdds = -8.0f; o[n].riseLogOdds = -8.0f; o[n].fallLogOdds = 0.0f; }
+    return n;
+}
+
+static void test_cvd(void)
+{
+    static SegObs o[4000];
+    static const char *texts[] = { "PARIS PARIS", "CQ DE K1ABC", "5NN TU 73" };
+    Cvd *v = malloc(sizeof *v);
+    Spd *p = malloc(sizeof *p);
+    Sta sta;
+    size_t ti;
+    for (ti = 0; ti < sizeof texts / sizeof texts[0]; ti++) {
+        double wpm = 18.0 + 6.0 * ti;
+        char got[64], want[64];
+        int n = keyed_obs(texts[ti], wpm, o, 4000), i, m = 0, kb;
+        const char *q;
+        sta_init(&sta);
+        for (i = 0; i < 5; i++) sta.means[i] = (float)log(112.94 / wpm * (i == 1 || i == 3 ? 3.0 : (i == 4 ? 7.0 : 1.0)));
+        cvd_init(v);
+        cvd_set_model(v, &sta);
+        for (i = 0; i < n; i++) {
+            int j;
+            cvd_update(v, &o[i]);
+            cvd_commit(v, i == n - 1, &sta);
+            for (j = 0; j < v->outCount && m < 63; j++) got[m++] = (char)v->out[j].charCode;
+        }
+        got[m] = 0;
+        for (q = texts[ti], m = 0; *q; q++) if (*q != ' ') want[m++] = *q;
+        want[m] = 0;
+        CHECK(!strcmp(got, want), "CVD decoded '%s' want '%s'", got, want);
+        spd_init(p);
+        for (i = 0; i < n; i++) spd_update(p, &o[i]);
+        kb = spd_best(p);
+        CHECK(fabs(log(p->wpm[kb] / wpm)) < 0.12, "SPD best %g WPM want %g", p->wpm[kb], wpm);
+        sta_free(&sta);
+    }
+    free(v);
+    free(p);
+}
+
 int main(void)
 {
     test_fe();
@@ -234,6 +356,8 @@ int main(void)
     test_chr();
     test_msg();
     test_api();
+    test_lik();
+    test_cvd();
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

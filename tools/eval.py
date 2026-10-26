@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Evaluate vail_decode on synthetic Morse: generates cases with cwgen, decodes, reports CER.
 
-  tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show]
+  tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show] [--jobs N]
 
 CER = Levenshtein(reference, decoded) / len(reference), computed on upper-cased text with
 runs of spaces collapsed (so word spacing counts, as one character per gap). CER-ns ignores
@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import zlib
+from multiprocessing import Pool
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.environ.get("VAIL_BUILD", os.path.join(ROOT, "build"))
@@ -77,8 +78,8 @@ def with_seeds(base, seeds):
     return out
 
 
-def run(case, show):
-    os.makedirs(TMP, exist_ok=True)
+def run(args):
+    case, show = args
     wav = os.path.join(TMP, case["name"] + ".wav")
     cmd = [os.path.join(BUILD, "cwgen"), "-o", wav, "-t", case["text"], "-w", str(case["wpm"]),
            "-f", str(case["pitch"]), "-j", str(case["jitter"]), "-r", str(zlib.crc32(case["name"].encode()) % 100000)]
@@ -94,9 +95,8 @@ def run(case, show):
     cer = lev(ref, got) / max(1, len(ref))
     rn, gn = ref.replace(" ", ""), got.replace(" ", "")
     cerns = lev(rn, gn) / max(1, len(rn))
-    if show:
-        print(f"{case['name']:28s} {cer*100:6.1f}%  {got}")
-    return cer, cerns
+    line = f"{case['name']:28s} {cer*100:6.1f}%  {got}" if show else None
+    return cer, cerns, line
 
 
 def main():
@@ -106,12 +106,17 @@ def main():
     if "--filter" in sys.argv:
         flt = sys.argv[sys.argv.index("--filter") + 1]
     seeds = int(sys.argv[sys.argv.index("--seeds") + 1]) if "--seeds" in sys.argv else 2
+    jobs = int(sys.argv[sys.argv.index("--jobs") + 1]) if "--jobs" in sys.argv else (os.cpu_count() or 1)
     groups = {}
     total = []
-    for c in with_seeds(cases(quick), seeds):
-        if flt and flt not in c["name"]:
-            continue
-        r = run(c, show)
+    todo = [c for c in with_seeds(cases(quick), seeds) if not flt or flt in c["name"]]
+    os.makedirs(TMP, exist_ok=True)
+    with Pool(jobs) as pool:
+        results = pool.map(run, [(c, show) for c in todo], chunksize=2)
+    for c, (cer, cerns, line) in zip(todo, results):
+        if line:
+            print(line)
+        r = (cer, cerns)
         key = c["name"].rsplit("_r", 1)[0]
         key = key.rsplit("_t", 1)[0] if "_t" in key else key
         groups.setdefault(key, []).append(r)

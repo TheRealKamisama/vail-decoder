@@ -15,10 +15,53 @@ void seg_init(Seg *s, Sta *sta)
     seg_build_duration_tables(s);
 }
 
+/* tuning: hazards from the duration pmf normalised over SEG_DUR_CAP frames, with the absorbing state
+ * (the last one of each side) taking the hazard of a geometric tail of the same mean residual length.
+ * Without it the unnormalised class scores leave about half the mark mass "beyond" the last state,
+ * which makes a mark of any length nearly free to extend. 0 restores 05 §4.1. */
+#ifndef SEG_TUNE_NORM_DUR
+#define SEG_TUNE_NORM_DUR 1
+#endif
+#define SEG_DUR_CAP       400
+#define SEG_HAZ_MIN       0.002
+#define SEG_HAZ_MAX       0.999
+
+static void build_side(DurState *d, int nmax, int sign, const Sta *sta)
+{
+    double q[SEG_DUR_CAP + 1], z = 0.0, surv = 1.0, h, tail = 0.0, mrl = 0.0;
+    int i;
+    for (i = 1; i <= SEG_DUR_CAP; i++) { q[i] = sta_total_prob(sta, sign * i); z += q[i]; }
+    for (i = 1; i <= SEG_DUR_CAP; i++) q[i] /= z;
+    for (i = 1; i < nmax; i++) {
+        h = surv > 1e-12 ? q[i] / surv : SEG_HAZ_MAX;
+        if (h < SEG_HAZ_MIN) h = SEG_HAZ_MIN;
+        if (h > SEG_HAZ_MAX) h = SEG_HAZ_MAX;
+        d[i].logEnd = lnf_floor(h);
+        d[i].logContinue = lnf_floor(1.0 - h);
+        surv -= q[i];
+    }
+    for (i = nmax; i <= SEG_DUR_CAP; i++) { tail += q[i]; mrl += (i - nmax + 1) * q[i]; }
+    h = (tail > 1e-12 && mrl > 0.0) ? tail / mrl : SEG_HAZ_MAX;
+    if (h < SEG_HAZ_MIN) h = SEG_HAZ_MIN;
+    if (h > SEG_HAZ_MAX) h = SEG_HAZ_MAX;
+    d[nmax].logEnd = lnf_floor(h);
+    d[nmax].logContinue = lnf_floor(1.0 - h);
+}
+
+void seg_tables_from(DurState *d, const Sta *sta)
+{
+    build_side(d, SEG_ON_MAX, +1, sta);
+    build_side(d + SEG_ON_MAX, SEG_OFF_MAX, -1, sta);
+}
+
 void seg_build_duration_tables(Seg *s)                     /* 05 §4.1 */
 {
     double survival = 1.0, hazard;
     int i;
+    if (SEG_TUNE_NORM_DUR) {
+        seg_tables_from(s->durState, s->statsRef);
+        return;
+    }
     for (i = 1; i <= SEG_ON_MAX; i++) {
         hazard = 1.0 - sta_total_prob(s->statsRef, +i) / survival;
         s->durState[i].logContinue = lnf_floor(hazard);
@@ -36,6 +79,7 @@ void seg_build_duration_tables(Seg *s)                     /* 05 §4.1 */
 
 static void forward_step(Seg *s)                           /* 05 §4.3 */
 {
+    enum { ON = SEG_ON_MAX, OFF = SEG_OFF_MAX };
     DurState *d = s->durState;
     int i, bestOnLen, bestOffLen;
     float bestOnScore, bestOffScore, sc;
@@ -47,35 +91,35 @@ static void forward_step(Seg *s)                           /* 05 §4.3 */
         if (sc > bestOnScore) { bestOnLen = i; bestOnScore = sc; }
     }
     s->onDurations[s->windowIndex] = bestOnLen;
-    if (d[20].score + d[20].logContinue <= d[19].score + d[19].logContinue) {
-        d[20].score = d[19].score + d[19].logContinue + s->keyLogOdds;
+    if (d[ON].score + d[ON].logContinue <= d[ON - 1].score + d[ON - 1].logContinue) {
+        d[ON].score = d[ON - 1].score + d[ON - 1].logContinue + s->keyLogOdds;
         s->onRun = 0;
     } else {
-        d[20].score = d[20].score + d[20].logContinue + s->keyLogOdds;
+        d[ON].score = d[ON].score + d[ON].logContinue + s->keyLogOdds;
         s->onRun++;
     }
-    for (i = 19; i >= 2; i--)
+    for (i = ON - 1; i >= 2; i--)
         d[i].score = d[i - 1].score + d[i - 1].logContinue + s->keyLogOdds;
 
     bestOffLen = SEG_OFF_MAX + s->offRun;
-    bestOffScore = d[50].score + d[50].logEnd;
+    bestOffScore = d[ON + OFF].score + d[ON + OFF].logEnd;
     for (i = SEG_OFF_MAX - 1; i >= 1; i--) {
-        sc = d[20 + i].score + d[20 + i].logEnd;
+        sc = d[ON + i].score + d[ON + i].logEnd;
         if (sc > bestOffScore) { bestOffLen = i; bestOffScore = sc; }
     }
     s->offDurations[s->windowIndex] = -bestOffLen;
-    if (d[50].score + d[50].logContinue <= d[49].score + d[49].logContinue) {
-        d[50].score = d[49].score + d[49].logContinue + s->spaceLogOdds;
+    if (d[ON + OFF].score + d[ON + OFF].logContinue <= d[ON + OFF - 1].score + d[ON + OFF - 1].logContinue) {
+        d[ON + OFF].score = d[ON + OFF - 1].score + d[ON + OFF - 1].logContinue + s->spaceLogOdds;
         s->offRun = 0;
     } else {
-        d[50].score = d[50].score + d[50].logContinue + s->spaceLogOdds;
+        d[ON + OFF].score = d[ON + OFF].score + d[ON + OFF].logContinue + s->spaceLogOdds;
         s->offRun++;
     }
-    for (i = 29; i >= 2; i--)
-        d[20 + i].score = d[20 + i - 1].score + d[20 + i - 1].logContinue + s->spaceLogOdds;
+    for (i = OFF - 1; i >= 2; i--)
+        d[ON + i].score = d[ON + i - 1].score + d[ON + i - 1].logContinue + s->spaceLogOdds;
 
-    d[1].score = bestOffScore + s->keyLogOdds;
-    d[21].score = bestOnScore + s->spaceLogOdds;
+    d[1].score = bestOffScore + s->riseLogOdds;
+    d[ON + 1].score = bestOnScore + s->fallLogOdds;
 }
 
 static void seg_reset(Seg *s)                              /* 05 §4.5 */
@@ -86,7 +130,7 @@ static void seg_reset(Seg *s)                              /* 05 §4.5 */
     s->outCount = 0;
     s->onRun = s->offRun = 0;
     for (i = 2; i <= SEG_ON_MAX; i++) s->durState[i].score = SEG_LOG_ZERO;
-    for (i = 2; i <= SEG_OFF_MAX; i++) s->durState[20 + i].score = SEG_LOG_ZERO;
+    for (i = 2; i <= SEG_OFF_MAX; i++) s->durState[SEG_ON_MAX + i].score = SEG_LOG_ZERO;
 }
 
 static uint8_t or_bits(const Seg *s, int pos, int n)
@@ -132,7 +176,7 @@ static void traceback_and_emit(Seg *s)                     /* 05 §4.4 */
     for (i = 2; i <= SEG_ON_MAX; i++)
         if (d[i].score > bestScore) { best = i; bestScore = d[i].score; }
     for (i = 1; i <= SEG_OFF_MAX; i++)
-        if (d[20 + i].score > bestScore) { best = -i; bestScore = d[20 + i].score; }
+        if (d[SEG_ON_MAX + i].score > bestScore) { best = -i; bestScore = d[SEG_ON_MAX + i].score; }
     emitLen = expand_len(s, best);
 
     pos = s->windowIndex + 1;
@@ -159,7 +203,7 @@ static void traceback_and_emit(Seg *s)                     /* 05 §4.4 */
         for (i = 1; i <= SEG_ON_MAX; i++)
             newScore[i] = survives(s, i) ? d[i].score - bestScore : SEG_LOG_ZERO;
         for (i = 1; i <= SEG_OFF_MAX; i++)
-            newScore[20 + i] = survives(s, -i) ? d[20 + i].score - bestScore : SEG_LOG_ZERO;
+            newScore[SEG_ON_MAX + i] = survives(s, -i) ? d[SEG_ON_MAX + i].score - bestScore : SEG_LOG_ZERO;
         for (i = 1; i <= SEG_ON_MAX + SEG_OFF_MAX; i++) d[i].score = newScore[i];
         memmove(s->onDurations, s->onDurations + SEG_CONTEXT_KEEP, SEG_CONTEXT_KEEP * sizeof(int));
         memmove(s->offDurations, s->offDurations + SEG_CONTEXT_KEEP, SEG_CONTEXT_KEEP * sizeof(int));
@@ -168,11 +212,18 @@ static void traceback_and_emit(Seg *s)                     /* 05 §4.4 */
     }
 }
 
-void seg_update(Seg *s, int bit, float keyProb)            /* 05 §4.2 */
+/* log(1 + e^x) without overflow */
+static double softplus(double x) { return x > 30.0 ? x : (x < -30.0 ? exp(x) : log1p(exp(x))); }
+
+void seg_update(Seg *s, int bit, const SegObs *o)          /* 05 §4.2 */
 {
     s->bitHist[s->windowIndex] = (uint8_t)(bit != 0);
-    s->keyLogOdds = lnf_floor(keyProb);
-    s->spaceLogOdds = lnf_floor(1.0 - keyProb);
+    s->keyLogOdds = (float)-softplus(-o->keyLogOdds);      /* log keyProb */
+    s->spaceLogOdds = (float)-softplus(o->keyLogOdds);     /* log (1 - keyProb) */
+    if (s->keyLogOdds < SEG_LOG_ZERO) s->keyLogOdds = SEG_LOG_ZERO;
+    if (s->spaceLogOdds < SEG_LOG_ZERO) s->spaceLogOdds = SEG_LOG_ZERO;
+    s->riseLogOdds = s->spaceLogOdds + o->riseLogOdds;
+    s->fallLogOdds = s->spaceLogOdds + o->fallLogOdds;
     forward_step(s);
     if (s->windowIndex == SEG_WINDOW_LEN - 1 || s->carrierDrop) {
         if (s->windowIndex < SEG_CONTEXT_KEEP) seg_reset(s);

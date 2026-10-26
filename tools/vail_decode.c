@@ -7,6 +7,7 @@
  *     -v     print state / pitch / SNR / WPM every API_POLL_FRAMES (15) frames to stderr
  *     -p HZ  lock the pitch at HZ from the start (API_PitchLock)
  *     -T F   write a per-frame trace of every channel pipeline to file F
+ *     -E F   write every classified element of every channel to file F (id frame duration kind bin)
  *     -m     operating mode on: emulate a host that applies API_DeleteCount before appending,
  *            and print the resulting host text
  */
@@ -17,7 +18,7 @@
 #include "../src/vail.h"
 #include "wav.h"
 
-extern FILE *vail_trace;
+extern FILE *vail_trace, *vail_elems;
 
 static int16_t *resample(const int16_t *in, long n, int rate, long *outN)
 {
@@ -54,6 +55,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-m")) mode = 1;
         else if (!strcmp(argv[i], "-p") && i + 1 < argc) lockHz = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-T") && i + 1 < argc) vail_trace = fopen(argv[++i], "w");
+        else if (!strcmp(argv[i], "-E") && i + 1 < argc) vail_elems = fopen(argv[++i], "w");
         else path = argv[i];
     }
     if (!path) { fprintf(stderr, "usage: %s [-a] [-s] [-v] [-p HZ] file.wav\n", argv[0]); return 2; }

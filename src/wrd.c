@@ -33,7 +33,10 @@
 #define WRD_WS_NONE          0.0f
 #define WRD_WS_FORCED_BONUS  100.0f
 #define WRD_WS_NONE_BONUS    (-10000.0f)
-#define WRD_WS_SLOPE         6.0
+#ifndef WRD_WS_SLOPE
+#define WRD_WS_SLOPE         10.0   /* tuning: 07 §4.5 has 6.0; a clear letter or word gap then outweighs
+                                     * the templates (long digit strings were split into groups) */
+#endif
 #define WRD_WS_TANH_IN_MAX   5.0
 #define WRD_WS_TANH_OUT_MAX  0.9999
 #define WRD_WS_EPS           0.00001

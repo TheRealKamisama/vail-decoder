@@ -16,10 +16,13 @@ host may lack a system compiler; any C99 compiler works via `CC`, e.g. `CC="zig 
 
 ```
 ./build.sh                                   # build/vail_decode, build/cwgen, build/test_conformance
-./build/test_conformance                     # 13-conformance vectors + primitive cross-checks
+./build/test_conformance                     # 13-conformance vectors, primitive cross-checks, unit tests
 ./build/cwgen -o x.wav -t "CQ DE K1ABC" -w 25 -f 700 -n 3    # synthetic Morse; options in its header comment
-./build/vail_decode [-a] [-m] [-s] [-v] [-T trace.txt] x.wav # decode a WAV (any rate, 16-bit)
-python3 tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show]   # CER over a synthetic grid
+./build/vail_decode [-a] [-m] [-s] [-v] [-T trace.txt] [-E elems.txt] x.wav # decode a WAV (any rate, 16-bit)
+python3 tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show]   # CER over the original grid
+python3 tools/weak.py [--full] [--builds A,B] [--snr ..] [--cond ..] [--show]   # weak-signal grid
+python3 tools/elemcheck.py [--build DIR] [--snr -10,-12] [--cond clean]  # element errors vs ground truth
+python3 tools/lmgen.py                       # regenerates src/lm_table.h (CVD character trigram)
 ```
 
 `./build-windows.sh` cross-compiles `build/win/vail_live.exe` (live decoding from a Windows sound input,
@@ -29,8 +32,12 @@ python3 tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show]   # CER o
 `eval.py` uses `VAIL_BUILD` (default `build/`) so tuning variants can be compared;
 `tools/ab.sh NAME "-DSTA_TUNE_GRID_FIT=0" [--seeds 4]` builds `build/v_NAME` with those flags and
 prints its overall CER (full table in `build/v_NAME/eval.txt`). Use `--seeds 4` (464 cases) before
-adopting a change; 2 seeds is too noisy for differences under ~0.5 %. `vail_decode -T` writes a per-frame trace of every
-channel (bin, floor, amplitude, envelope, threshold, keyProb, carrier, emitted elements, STA means).
+adopting a change; 2 seeds is too noisy for differences under ~0.5 %. Both eval tools run in parallel.
+Weak-signal work is measured with `tools/weak.py --builds build,build/v_NAME` (1440 cases by default,
+`--full` 4200): builds are compared on identical audio, and the summary gives the SNR at 10 % and
+25 % CER; differences under ~0.3 % in its mean are noise. `vail_decode -T` writes a per-frame trace of
+every channel (bin, floor, amplitude, SNR estimate, LLR, keyProb, carrier, noise references,
+log-odds, emitted elements, STA means, CVD characters).
 
 ## Clean-room rules (binding, from `cleanroom/README.md` §0)
 
@@ -63,10 +70,11 @@ Every edit to the document set must follow these:
 
 ## Architecture (big picture)
 
-Per-frame, one-way pipeline (`01-overview.md` §3, `11-module-contracts.md` §1):
+Per-frame, one-way pipeline (`01-overview.md` §3, `11-module-contracts.md` §1), with the weak-signal
+replacements of ENV and CHR switched in (see `docs/weak-signal.md`):
 
 ```
-FE → BCM → for each channel: SIG{ SPM → ENV → SEG → CHR → WRD } → MSG → API
+FE → BCM → for each channel: SIG{ SPM → ENV → SEG ⇄ STA (⇄ SPD) → CVD → WRD } → MSG → API
 ```
 
 - `FE` produces a 128-bin power `Spectrum`: bin `j` = `203.125 + 7.8125·j` Hz, from a 1024-point
@@ -75,25 +83,43 @@ FE → BCM → for each channel: SIG{ SPM → ENV → SEG → CHR → WRD } → 
   the noise floor and the channel table. It creates, merges (every 32 frames) and retires channels,
   and picks the current channel. Each channel runs its own `SIG` instance.
 - The only feedback loop is `SEG ↔ STA`: `SEG` sends element history to `STA`, and `STA` sends
-  back the duration priors (5-class log-duration model) that drive `SEG`'s HMM.
+  back the duration priors (5-class log-duration model) that drive `SEG`'s HMM (and `CVD`). `SPD`
+  watches that loop and restarts `STA` from another speed when a fixed-timing model fits much better.
 - `CHR` decodes elements through a 64-entry code table. A miss never drops elements: it splits,
   then falls back to a placeholder. `WRD` runs Viterbi over a template state graph to set
   word-end/word-class. `MSG` keeps 500 chars, shifts left by 125 on overflow, and dedups by
   `elementOrdinal`.
+- Weak-signal path (each a `*_TUNE_*` switch, on by default): `ENV_TUNE_LIK` (likelihood keying
+  detector: Rician/exponential LLRs, noise from the bin's key-up frames bounded by its side bins, EM
+  SNR estimate; `LIK_TUNE_PEAK` keyed peak tracking), `SEG_TUNE_NORM_DUR` (normalised duration hazards), `SPD_TUNE` (speed bank),
+  `CVD_TUNE` (characters decoded directly from SEG's per-frame input by `cvd.c`; CHR is then only the
+  code table), `SIG_TUNE_REPLAY` / `SIG_TUNE_OVER` (re-decoding once the timing is learned, per
+  transmission), `BCM_TUNE_TEXT_RATE` (a channel needs sustained text to become current). SEG's input
+  is `SegObs` (log-odds of key-down, rising and falling edge frames); with `ENV_TUNE_LIK=0` it is the
+  reference keyProb as log-odds.
 
 ## Code layout
 
 One file per module under `src/` (`fe.c`, `bcm.c`, `sig.c`, `sigext.c` = SPM+ENV, `seg.c`, `sta.c`,
-`chr.c`, `wrd.c`, `msg.c`, `api.c`, `filt.c` = primitives); `vail.h` is the public host API,
-`vail_internal.h` holds every module struct and the spec constants. Comments cite spec sections
-(`05 §8.6`). Things that are easy to get wrong:
+`spd.c`, `cvd.c`, `chr.c`, `wrd.c`, `msg.c`, `api.c`, `filt.c` = primitives); `vail.h` is the public host
+API, `vail_internal.h` holds every module struct and the spec constants, `lm_table.h` is generated by
+`tools/lmgen.py`. Comments cite spec sections (`05 §8.6`). Things that are easy to get wrong:
 
 - `SEG` emits batches newest-first (as the spec does); `sig.c` reverses them before `CHR`, which works
   in ascending time order. `CHR`'s run boundary element is the gap that *follows* a character.
 - `WRD` is re-run from scratch on the last 26 characters each time (A13); `MSG` dedups by
   `elementOrdinal`, so the re-sent tail must carry identical ordinals.
-- Tuning switches are `*_TUNE_*` macros (`sta.c`, `vail_internal.h`, `api.c`); 0 restores the
-  reference behaviour. Measure any change with `tools/eval.py` before and after.
+- Tuning switches are `*_TUNE_*` macros (`sta.c`, `seg.c`, `vail_internal.h`, `api.c`); 0 restores the
+  reference behaviour. Measure any change with `tools/eval.py` and `tools/weak.py` before and after.
+- `CVD` runs on the same per-frame input as `SEG` and takes its durations from `STA`; when `STA`'s
+  model changes (`modelDirty`, a speed-bank snap) `cvd_set_model` must follow. Its ordinals are SEG
+  steps (the end of the gap after each code), so they stay unique and increasing for `MSG`.
+- The FE window cutoff is 0.0023 (30 Hz noise bandwidth), not the spec's 0.003125; ENV derives its
+  LLR scale from the window, so a host that computes its own spectrum must use the same window.
+- A channel's centre bin is moved by SPM (strong signals) and by ENV's keyed peak tracking
+  (`env_peak_move`, weak ones); the history rings in ENV keep the old bin's powers across a move.
+- `cleanroom/` is not part of this repository. The weak-signal departures are recorded in
+  `docs/weak-signal.md` and belong in `12-open-items.md` §E where the document set is kept.
 
 ## Where to put and check things
 

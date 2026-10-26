@@ -12,7 +12,10 @@
 #define FE_HOP_SAMPLES     85
 #define FE_FFT_SIZE        1024
 #define FE_WINDOW_CENTER   512
-#define FE_WINDOW_CUTOFF   0.003125
+#ifndef FE_WINDOW_CUTOFF
+#define FE_WINDOW_CUTOFF   0.0023     /* tuning: 02 §4.1 has 0.003125 (45 Hz flat top); 0.0023 gives
+                                         * 30 Hz noise bandwidth, closer to matched for 20-30 WPM */
+#endif
 #define FE_TWO_PI          6.283185307179586
 #define FE_SAMPLE_SCALE    0.000030517578125
 #define FE_BIN_FIRST       26
@@ -118,6 +121,85 @@ void spm_process_frame(Spm *s, const float *spectrum, float noiseFloor);
 #define ENV_SQ_MAX_LEN        2048
 #define ENV_SIG_OBS_LEVEL     1.3
 
+/* one frame of SEG input, as log-odds against key-up: a key-down frame, the first frame of a mark
+ * (rising edge) and the first frame of a gap (falling edge). Without an edge model (05 §4.3) the
+ * rising edge is a key-down frame and the falling edge a key-up frame (riseLogOdds = keyLogOdds,
+ * fallLogOdds = 0); keyLogOdds = log(keyProb / (1 - keyProb)). */
+typedef struct { float keyLogOdds, riseLogOdds, fallLogOdds; } SegObs;
+
+/* Likelihood keying detector (ENV_TUNE_LIK, replaces the threshold of 04 §4.4). Per frame it takes the
+ * channel bin's power and noise references from the bins beside it, and outputs, LIK_DELAY frames later,
+ * the SEG input as calibrated log-likelihood ratios: noise-only power is exponential, key-down power is
+ * Rician with per-frame SNR envSnr. The noise is the bin's own key-up average kept between the levels of
+ * the two sides; envSnr is the key-down average over a window around the output frame (an EM step on
+ * 3-frame posteriors); frames raised by a click or static crash are scored against their own broadband
+ * level. The carrier is the SNR estimate with hysteresis. */
+#ifndef ENV_TUNE_LIK
+#define ENV_TUNE_LIK          1
+#endif
+#define LIK_DELAY             36     /* output lag, frames (as the reference ENV) */
+#define LIK_RING              128    /* history length, power of two > 2 * LIK_DELAY + 2 */
+#define LIK_NB_FIRST          6      /* noise reference: bins at offsets 6..16 on each side */
+#define LIK_NB_LAST           16
+#define LIK_NOISE_WIN         73     /* running means of the noise references, frames */
+#ifndef LIK_SIG_WIN
+#define LIK_SIG_WIN           71     /* triangular SNR window centred on the output frame (odd, at most
+                                      * 2 * LIK_DELAY - 1) */
+#endif
+#ifndef LIK_KAPPA_GAIN
+#define LIK_KAPPA_GAIN        1.25   /* x the LLR scale (derived from the FE window) of SEG's input; the
+                                      * SNR estimation always uses the derived scale */
+#endif
+#ifndef LIK_EDGE_GAIN
+#define LIK_EDGE_GAIN         0.35f  /* key-down power seen by the frame at a key edge; 0 = no edge model */
+#endif
+#define LIK_PRIOR_ON          0.40f  /* key-down prior of the EM posteriors */
+#define LIK_S_MIN             0.25f  /* smallest per-frame SNR (power ratio) */
+#define LIK_S_INIT            4.0f
+#define LIK_W0                3.0f   /* pseudo-frames pulling the SNR estimate to LIK_S_MIN */
+#ifndef LIK_CAR_ON
+#define LIK_CAR_ON            1.0f   /* carrier hysteresis on the per-frame SNR */
+#endif
+#ifndef LIK_CAR_OFF
+#define LIK_CAR_OFF           0.6f
+#endif
+#define LIK_QRN_RATIO         2.0f   /* a frame whose broadband level exceeds this x the noise ... */
+#define LIK_QRN_REL           0.05f  /* ... and this fraction of the centre bin's power is impulsive */
+#define LIK_LLR_CLAMP         20.0f  /* per-frame log-odds handed to SEG are limited to +-this */
+#define LIK_OWN_CAP           10.0f  /* key-up frames enter the own noise average capped at this x side */
+#ifndef LIK_DYN_RANGE
+#define LIK_DYN_RANGE         1e-5f  /* noise is taken at least this x the band's peak power (50 dB) */
+#endif
+/* keyed peak tracking: the key-down excess of the bins around the centre, a leaky sum over about
+ * LIK_PEAK_TAU frames, moves the channel one bin towards a peak 1 or 2 bins away when the peak beats
+ * the centre by LIK_PEAK_RATIO. It follows weak signals, whose peak ratio never reaches SPM's tracking
+ * threshold; excess still rising LIK_PEAK_SPAN bins away is another signal's skirt and is left alone */
+#ifndef LIK_TUNE_PEAK
+#define LIK_TUNE_PEAK         1
+#endif
+#define LIK_PEAK_SPAN         3
+#define LIK_PEAK_TAU          128.0
+#ifndef LIK_PEAK_RATIO
+#define LIK_PEAK_RATIO        1.15
+#endif
+#define LIK_PEAK_MIN          20.0   /* centre excess (noise x frames) needed before moving */
+#define LIK_PEAK_HOLD         64     /* frames between two moves */
+
+typedef struct {
+    float x[LIK_RING];                     /* centre power */
+    float nl[LIK_RING], nr[LIK_RING];      /* left / right side levels, clipped */
+    float broad[LIK_RING];                 /* broadband level of the frame */
+    float g[LIK_RING], gy[LIK_RING];       /* EM terms: key-down posterior, posterior x (y - 1) */
+    float go[LIK_RING], gox[LIK_RING];     /* key-up posterior, posterior x power */
+    float xn[LIK_RING][2 * LIK_PEAK_SPAN]; /* powers of the bins centre - span .. centre + span, but the centre */
+    int t;                                 /* frames seen */
+    double nlSum, nrSum, goSum, goxSum;
+    double peakEx[2 * LIK_PEAK_SPAN + 1];  /* key-down excess power of centre - span .. centre + span */
+    int peakHold;
+    float noise, noiseL, noiseR, noiseOwn; /* noise estimates: used, left, right, own key-up frames */
+    float llr;                             /* LLR of the output frame */
+} Lik;
+
 typedef struct {
     BoxAvg envSmoother, envThrShaper;
     RunExt envPeakHold, envMaxShort, envThrMinHold;
@@ -127,16 +209,32 @@ typedef struct {
     float envKeyProb, envMeanSquare, envStrength;
     float envEnvelope, envThreshold;                   /* same-frame copies */
     int envCarrier;
+    float envSnr;                                      /* per-frame SNR estimate (power ratio) */
+    SegObs envObs;                                     /* SEG input of the output frame */
+    Lik lik;
 } Env;
 
 void env_init(Env *e);
 void env_free(Env *e);
 void env_apply(Env *e, float prominence, float amplitude);
+/* likelihood path: the channel bin's power, the noise references of spm_noise_sides, and the lowest
+ * noise power accepted (dynamic range of the analysis; digital silence) */
+void env_apply_lik(Env *e, float power, const float *beside, float noiseLeft, float noiseRight, float broad,
+                   float noiseMin);
+int env_peak_move(Env *e);                  /* -1, 0 or +1: the bin the channel should move by */
+/* the beside argument of env_apply_lik: powers of the bins centre - LIK_PEAK_SPAN .. centre +
+ * LIK_PEAK_SPAN without the centre, in order */
+void spm_noise_sides(const float *spectrum, int centerBin, float *left, float *right, float *broad);
+double lik_llr(double y, double s);
 
 /* --------------------------------------------------------------- SEG (05) */
 #define SEG_SILENCE_LEVEL   1.3
-#define SEG_ON_MAX          20
-#define SEG_OFF_MAX         30
+#ifndef SEG_ON_MAX
+#define SEG_ON_MAX          30
+#endif
+#ifndef SEG_OFF_MAX
+#define SEG_OFF_MAX         60
+#endif
 #define SEG_WINDOW_LEN      50
 #define SEG_CONTEXT_KEEP    25
 #define SEG_EMIT_CAPACITY   50
@@ -164,6 +262,7 @@ typedef struct {
     int onDurations[SEG_WINDOW_LEN], offDurations[SEG_WINDOW_LEN];
     int onRun, offRun;
     float keyLogOdds, spaceLogOdds;
+    float riseLogOdds, fallLogOdds;   /* emissions of the first frame of a mark / of a gap */
     int carrierDrop;
     DurState durState[SEG_ON_MAX + SEG_OFF_MAX + 1];
     Element out[SEG_EMIT_CAPACITY];
@@ -173,7 +272,8 @@ typedef struct {
 
 void seg_init(Seg *s, struct Sta *sta);
 void seg_build_duration_tables(Seg *s);
-void seg_update(Seg *s, int bit, float keyProb);
+void seg_tables_from(DurState *d, const struct Sta *sta);   /* normalised hazards of sta's model */
+void seg_update(Seg *s, int bit, const SegObs *obs);
 
 /* --------------------------------------------------------------- STA (05) */
 #define STA_WINDOW_LEN       14
@@ -202,6 +302,48 @@ int sta_commit(Sta *s, const Element *source, int n, Element **out);
 void sta_classify(const Sta *s, Element *e);
 float sta_speed(const Sta *s);
 int sta_flush_priming(Sta *s, Element **out);
+
+/* --------------------------------------------------------------- SPD (speed bank)
+ * SPD_N explicit-duration HMMs, each with the standard timing (dash and letter gap 3 units, word gap 7)
+ * at a fixed speed, run on SEG's input, plus one with SEG's current tables. Their leaky forward
+ * log-likelihoods give a speed estimate that does not depend on SEG's own segmentation, whose duration
+ * prior comes from STA: at low SNR that loop can lock onto a wrong speed (merged elements read as a
+ * slower sender, and so on). */
+#ifndef SPD_TUNE
+#define SPD_TUNE        1
+#endif
+#define SPD_N           15
+#define SPD_WPM_MIN     12.0
+#define SPD_WPM_MAX     45.0
+#define SPD_UNIT_NUM    112.94     /* frames per dot unit at 1 WPM (1.2 s / 10.625 ms) */
+#ifndef SPD_TAU
+#define SPD_TAU         400.0      /* score memory, frames of carrier */
+#endif
+#ifndef SPD_SNAP_MARGIN
+#define SPD_SNAP_MARGIN 8.0        /* nats the best speed must lead the STA speed by to replace it */
+#endif
+#ifndef SPD_SNAP_STEPS
+#define SPD_SNAP_STEPS  2          /* ... and be at least this many candidates (about 10 % each) away */
+#endif
+#define SPD_HOLD        150        /* frames between two replacements */
+
+#define SPD_CUR         SPD_N      /* the extra model: SEG's current (STA-adapted) tables */
+
+typedef struct {
+    float hz[SPD_N + 1][SEG_ON_MAX + SEG_OFF_MAX + 1];      /* hazard (probability that the run ends) */
+    double alpha[SPD_N + 1][SEG_ON_MAX + SEG_OFF_MAX + 1];  /* forward probabilities, normalised */
+    double score[SPD_N + 1];
+    float wpm[SPD_N];
+    int frames, hold;
+} Spd;
+
+void spd_init(Spd *p);
+void spd_set_current(Spd *p, const DurState *segTables);
+void spd_update(Spd *p, const SegObs *obs);
+void spd_forget(Spd *p);                    /* clears the scores (a new over starts) */
+int spd_best(const Spd *p);                 /* index of the best fixed-speed candidate */
+int spd_index_of(const Spd *p, float wpm);
+void spd_means(const Spd *p, int k, float *means);
 
 /* --------------------------------------------------------------- CHR (06) */
 #define CHR_TABLE_LEN          64
@@ -238,6 +380,69 @@ void chr_clear_history(Chr *c);
 /* elements: ascending time order */
 void chr_add_elements(Chr *c, const Element *elements, int n, int flush);
 const char *chr_lookup(const char *pat);
+int chr_table_size(void);
+const char *chr_table_out(int i);
+const char *chr_table_pattern(int i);
+float chr_table_weight(int i);
+
+/* --------------------------------------------------------------- CVD (character Viterbi decoder)
+ * Decodes characters directly from SEG's per-frame input with a duration HMM laid out as a trie of
+ * the code table: every node carries a mark (dot or dash) and an element-gap duration chain, and an
+ * inter-character gap chain links the codes. Element boundaries, gap classes and code identities are
+ * thus decided together, with the table weights as character priors, and only codes of the table can
+ * come out. Durations follow STA's model; a fixed-lag traceback of token-passing histories commits
+ * characters in the CHR output format. */
+#ifndef CVD_TUNE
+#define CVD_TUNE         1
+#endif
+#define CVD_MAX_NODES    80
+#define CVD_MARK_MAX     SEG_ON_MAX
+#define CVD_GAP_MAX      30
+#define CVD_CGAP_MAX     SEG_OFF_MAX
+#define CVD_POOL         2048
+#ifndef CVD_LAG
+#define CVD_LAG          80          /* frames a gap must lie in the past before its code is committed */
+#endif
+#ifndef CVD_LM_WEIGHT
+#define CVD_LM_WEIGHT    1.0f        /* scale of the character prior log-probabilities */
+#endif
+#ifndef CVD_LM_BIGRAM
+#define CVD_LM_BIGRAM    0.5f        /* weight of the character bigram (tools/lmgen.py) over the table prior */
+#endif
+#ifndef CVD_LM_ORDER
+#define CVD_LM_ORDER     3           /* 2: character bigram, 3: trigram */
+#endif
+#define CVD_OUT_MAX      64
+#define CVD_WP_MAX       400
+
+typedef struct { int32_t parent, step; int16_t value; uint8_t isGap, mark; } CvdNode;
+
+typedef struct {
+    float markEnd[2][CVD_MARK_MAX + 1], markCont[2][CVD_MARK_MAX + 1];   /* dot / dash hazards (log) */
+    float gapEnd[CVD_GAP_MAX + 1], gapCont[CVD_GAP_MAX + 1];             /* element gap */
+    float cgapEnd[CVD_CGAP_MAX + 1], cgapCont[CVD_CGAP_MAX + 1];         /* letter / word gap */
+    float wordProb[CVD_WP_MAX + 1];                                       /* P(word gap | length) */
+    float mark[CVD_MAX_NODES][CVD_MARK_MAX + 1];
+    int32_t markH[CVD_MAX_NODES][CVD_MARK_MAX + 1];
+    float gap[CVD_MAX_NODES][CVD_GAP_MAX + 1];
+    int32_t gapH[CVD_MAX_NODES][CVD_GAP_MAX + 1];
+    float cgap[CVD_CGAP_MAX + 1];
+    int32_t cgapH[CVD_CGAP_MAX + 1];
+    CvdNode pool[CVD_POOL];
+    int32_t freeHead, freeCount;
+    int32_t committedStep;   /* SEG step of the last committed code's end */
+    int step;                /* SEG step of the next frame */
+    Char out[CVD_OUT_MAX];
+    int outCount;
+} Cvd;
+
+void cvd_init(Cvd *v);
+void cvd_set_model(Cvd *v, const struct Sta *sta);
+void cvd_reset(Cvd *v, int step);         /* in a long gap, no history */
+void cvd_update(Cvd *v, const SegObs *obs);
+/* commits the codes whose following gap ended at least CVD_LAG frames ago (all of them when flush)
+ * into v->out / v->outCount */
+void cvd_commit(Cvd *v, int flush, const struct Sta *sta);
 
 /* --------------------------------------------------------------- WRD (07) */
 #define WRD_WINDOW_MAX 26
@@ -300,6 +505,8 @@ typedef struct {
     Env env;
     Seg seg;
     Sta sta;
+    Spd spd;
+    Cvd *cvd;
     Chr chr;
     Wrd wrd;
     Char hist[WRD_WINDOW_MAX]; int histCount;
@@ -309,13 +516,45 @@ typedef struct {
     float quality;
     int hasText;
     int segGate;
+    int frameBase;           /* absolute frame of SEG step 0 (debug output only) */
+    int id;                  /* channel id (debug output only) */
+    /* SEG input kept while STA learns, re-segmented with the learned model when learning ends; later
+     * the frames of the current over (SIG_TUNE_OVER) */
+    SegObs *replayObs;
+    uint8_t *replayBit, *replayDrop;
+    int replayCount, replayStep, replayOverflow;
+    Char cvdOut[256];        /* characters committed by CVD this frame */
+    int cvdOutCount, cvdReplayed;
+    /* the start of each later transmission (over) is decoded again once STA has seen it (SIG_TUNE_OVER) */
+    int overActive, overCount, overStep, prevCarrierCvd;
+    float overWpm;
 } Sig;
 
+/* tuning: after a carrier drop the next over may come from another station at another speed; CVD holds
+ * its output until STA has re-estimated on the new over (at most SIG_OVER_MAX frames), and decodes the
+ * over again from its start if the speed moved by more than SIG_OVER_SPEED; 0 decodes it straight on */
+#ifndef SIG_TUNE_OVER
+#define SIG_TUNE_OVER    1
+#endif
+#define SIG_OVER_MAX     400
+#define SIG_OVER_SPEED   0.08
+#define SIG_CVD_OUT_MAX  256
+
+/* tuning: when STA leaves its learning phase the buffered frames are segmented again with the learned
+ * timing (SEG ran on the default prior until then); 0 hands over the elements segmented so far */
+#ifndef SIG_TUNE_REPLAY
+#define SIG_TUNE_REPLAY  1
+#endif
+#define SIG_REPLAY_MAX   2048
+
 extern FILE *vail_trace;   /* per-frame SIG trace of every channel when non-NULL (debug aid) */
+extern FILE *vail_elems;   /* every classified element of every channel when non-NULL (debug aid):
+                            * "id absStartFrame signedDuration kind pitchBin" */
 void sig_init(Sig *s, int bin);
 void sig_free(Sig *s);
 /* Processes one frame; merges any new text into msg. */
-void sig_process_frame(Sig *s, const float *spectrum, const float *peakRatio, float noiseFloor, Msg *msg);
+void sig_process_frame(Sig *s, const float *spectrum, const float *peakRatio, float noiseFloor, float bandPeak,
+                       Msg *msg);
 
 /* --------------------------------------------------------------- BCM (03) */
 #define BCM_HISTORY_FRAMES     200
@@ -341,6 +580,15 @@ void sig_process_frame(Sig *s, const float *spectrum, const float *peakRatio, fl
 #define BCM_QUALITY_SENTINEL   (-2.1475e9f)
 #define BCM_REPLAY_INIT        199
 #define BCM_REPLAY_BATCH       4
+/* tuning: a channel becomes current only while it produces text at a sustained rate, so that a noise
+ * channel's odd character (a receiver filter edge, a crash) does not take the display when the
+ * station it follows stops; 0 restores 03 §4.10 */
+#ifndef BCM_TUNE_TEXT_RATE
+#define BCM_TUNE_TEXT_RATE     1
+#endif
+#define BCM_TEXT_DECAY         0.99f
+#define BCM_MIN_TEXT_RATE      1.5f
+#define BCM_PEAK_DECAY         0.998f   /* per frame, of the band's peak power (ENV dynamic range) */
 
 enum { CH_STATE_NEW = 0, CH_STATE_DECODING, CH_STATE_PAUSED, CH_STATE_DEAD };
 
@@ -356,6 +604,7 @@ typedef struct {
     Char frameNew[MSG_CAPACITY]; int frameNewCount;
     int frameReplaced;       /* spec base: replaced records + their spaces, summed over the frame */
     int frameDelete;         /* host characters to remove before frameNew is appended (tuning E7) */
+    float textRate;          /* new characters, leaky sum over about a second (BCM_TUNE_TEXT_RATE) */
 } Channel;
 
 typedef struct {
@@ -366,6 +615,7 @@ typedef struct {
     Channel **channels; int nChannels, capChannels;
     int frameCount;
     float noiseFloor;
+    float bandPeak;          /* peak-held strongest bin power (BCM_PEAK_DECAY: 20 dB in about 25 s) */
     Channel *currentChannel;
 } Bcm;
 

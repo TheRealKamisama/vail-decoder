@@ -28,6 +28,11 @@ static const struct { const char *out, *pattern; float priorWeight; } CHR_TABLE[
     { "8", "---...", 0.1f },
 };
 
+int chr_table_size(void) { return CHR_TABLE_LEN; }
+const char *chr_table_out(int i) { return CHR_TABLE[i].out; }
+const char *chr_table_pattern(int i) { return CHR_TABLE[i].pattern; }
+float chr_table_weight(int i) { return CHR_TABLE[i].priorWeight; }
+
 const char *chr_lookup(const char *pat)                    /* 06 §4.3 */
 {
     int i;

@@ -57,6 +57,8 @@ Channel *bcm_new_channel(Bcm *b, int bin)                  /* 03 §4.6 new-chann
     if (first < 1) first = 1;
     ch->nextFrame = first;
     ch->replayCounter = b->frameCount - first;
+    ch->pipeline->frameBase = first - LIK_DELAY;            /* both ENVs output LIK_DELAY frames late */
+    ch->pipeline->id = ch->id;
     if (b->nChannels == b->capChannels) {
         b->capChannels = b->capChannels ? b->capChannels * 2 : 16;
         b->channels = realloc(b->channels, (size_t)b->capChannels * sizeof(Channel *));
@@ -158,6 +160,7 @@ static void select_current(Bcm *b)                         /* 03 §4.10 */
     for (i = 0; i < b->nChannels; i++) {
         Channel *ch = b->channels[i];
         float q = ch->pipeline->quality;
+        if (BCM_TUNE_TEXT_RATE && ch->textRate < BCM_MIN_TEXT_RATE) continue;
         if (bcm_is_decoding(ch) && q > bestQ) { bestQ = q; best = ch; }
     }
     if (!best) return;
@@ -218,8 +221,9 @@ static void state_machine(Channel *ch)                     /* 03 §4.9 */
 static void channel_frame(Bcm *b, Channel *ch, const float *spectrum)   /* 03 §4.11 ChannelFrame */
 {
     Msg *m = ch->msgA;
-    sig_process_frame(ch->pipeline, spectrum, b->peakRatio, b->noiseFloor, m);
+    sig_process_frame(ch->pipeline, spectrum, b->peakRatio, b->noiseFloor, b->bandPeak, m);
     ch->bin = ch->pipeline->spm.spmCenterBin;
+    ch->textRate = ch->textRate * BCM_TEXT_DECAY + (ch->pipeline->hasText ? (float)m->newTailCount : 0.0f);
     if (ch->pipeline->hasText) {
         int i, room, n, d = 0;
         for (i = 0; i < m->replacedCount; i++) ch->frameReplaced += msg_rendered_len(&m->replaced[i]);
@@ -262,6 +266,8 @@ void bcm_on_frame(Bcm *b, const float *spectrum)           /* 03 §2.3 */
     if (periodic) merge_by_bin_distance(b);
     b->inputSpectrum = spectrum;
     memcpy(b->historyRing[b->frameCount % BCM_HISTORY_FRAMES], spectrum, N_BINS * sizeof(float));
+    b->bandPeak *= BCM_PEAK_DECAY;
+    for (i = 0; i < N_BINS; i++) if (spectrum[i] > b->bandPeak) b->bandPeak = spectrum[i];
     update_peak_map(b);
     update_channels(b);
     select_current(b);
