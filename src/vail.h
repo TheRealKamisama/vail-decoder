@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* vail — real-time CW (Morse) decoding core. Public host interface (cleanroom/09-host-interface.md). */
 #ifndef VAIL_H
 #define VAIL_H

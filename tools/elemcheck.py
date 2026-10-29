@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Element-level error breakdown against the generator's ground truth.
 
   tools/elemcheck.py [--build DIR] [--wpm 20,25,30] [--snr -10,-12] [--cond clean] [--seeds N] [--show]

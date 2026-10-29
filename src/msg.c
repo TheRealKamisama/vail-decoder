@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* MSG — message model (08-message-model.md). */
 #include <string.h>
 #include "vail_internal.h"

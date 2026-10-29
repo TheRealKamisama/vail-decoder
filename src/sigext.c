@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* SPM (spectrum matcher) and ENV (envelope estimator), 04-signal-extraction.md. */
 #include <math.h>
 #include <stdlib.h>

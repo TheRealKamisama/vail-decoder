@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* cwgen — synthesise Morse test audio (8 kHz, 16-bit mono WAV) for exercising vail.
  *
  *   cwgen -o out.wav [-t TEXT] [-w WPM] [-f HZ] [-n SNR_DB] [-j JITTER] [-r SEED]

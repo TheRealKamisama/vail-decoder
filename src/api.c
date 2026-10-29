@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* API — host interface (09-host-interface.md) and host-side message assembly (08 §4.2–§4.6). */
 #include <math.h>
 #include <stdlib.h>

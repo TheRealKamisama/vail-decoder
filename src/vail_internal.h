@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* vail — internal module definitions (FE, BCM, SIG, SPM, ENV, SEG, STA, CHR, WRD, MSG).
  * Every constant and algorithm follows cleanroom/; section references are given as "02 §4.2" etc. */
 #ifndef VAIL_INTERNAL_H

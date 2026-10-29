@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* CHR — character decoder (06-character-decoding.md).
  * Elements are kept in ascending time order here; the spec indexes them newest-first, so its
  * "interval start" element Element[first] is the boundary gap that FOLLOWS a character run. */

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* CVD — character Viterbi decoder (see vail_internal.h). */
 #include <math.h>
 #include <stdlib.h>

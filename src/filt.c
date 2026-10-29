@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Filter primitives RUNMIN(n), RUNMAX(n), BOXAVG(n, k) (04 §5). */
 #include <math.h>
 #include <stdlib.h>

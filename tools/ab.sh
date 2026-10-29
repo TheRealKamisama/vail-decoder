@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # A/B a tuning variant: tools/ab.sh NAME "-DFLAG=0 ..." [eval.py args]
 # Builds build/v_NAME with the extra flags, runs tools/eval.py on it and prints the overall line;
 # the full table is left in build/v_NAME/eval.txt. CC as for build.sh.

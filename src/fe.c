@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* FE — spectrum front end (02-frontend-spectrum.md). */
 #include <math.h>
 #include <stdlib.h>

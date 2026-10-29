@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* SPD — speed bank: fixed-speed duration HMMs scored on SEG's input (see vail_internal.h). The forward
  * (sum over paths) likelihood is used: a best-path score lets every model explain weak marks away as
  * one long pause, which the slowest model does most cheaply. */

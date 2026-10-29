@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* SEG — element segmenter (05-element-segmentation.md, Part I). */
 #include <math.h>
 #include <stdlib.h>

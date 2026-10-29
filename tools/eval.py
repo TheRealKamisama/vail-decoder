@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Evaluate vail_decode on synthetic Morse: generates cases with cwgen, decodes, reports CER.
 
   tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show] [--jobs N]

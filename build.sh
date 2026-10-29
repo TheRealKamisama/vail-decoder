@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Builds the vail core library and tools into build/.
 # CC defaults to cc; on hosts without one, a Zig toolchain works: CC="zig cc" ./build.sh
 set -e

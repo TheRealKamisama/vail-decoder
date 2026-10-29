@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Cross-compiles the Windows tools into build/win/: vail_live.exe (live sound-card decoding) and
 # vail_decode.exe (WAV files). CC must target Windows, e.g. CC="zig cc -target x86_64-windows-gnu".
 set -e

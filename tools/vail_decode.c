@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* vail_decode — decode Morse from a WAV file (or raw s16le @ 8 kHz) with the vail core.
  *
  *   vail_decode [-a] [-s] [-v] [-p HZ] file.wav

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Weak-signal evaluation of vail_decode: CER against SNR at 18-30 WPM, in parallel.
 
   tools/weak.py [--builds DIR[,DIR...]] [--seeds N] [--wpm 20,25,30] [--snr -4,-6,...]

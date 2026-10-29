@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* SIG — per-signal pipeline aggregate: SPM → ENV → SEG → STA → CHR → WRD → MSG.
  * The glue rules (carrier drop, gate, quality, text flag, WRD batching) follow 03 §2.1,
  * 05 §0 and the defaults recorded in 12-open-items.md (A12, A13, D6, E8). With CVD_TUNE the

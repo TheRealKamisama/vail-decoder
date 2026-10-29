@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* vail_live — live Morse decoding from a Windows sound input device (e.g. a radio's audio output).
  *
  *   vail_live -l                         list input devices

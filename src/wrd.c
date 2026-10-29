@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* WRD — word segmenter (07-word-segmentation.md). */
 #include <math.h>
 #include <stdlib.h>

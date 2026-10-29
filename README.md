@@ -130,3 +130,15 @@ fading, interference, impulse noise, drift, short messages), the overall charact
 **0.2 %** (it was 3.7 %). Details and the changes behind these numbers are in
 [docs/weak-signal.md](docs/weak-signal.md). An earlier head-to-head comparison with a related decoder
 is in [docs/libmorsedec-comparison.md](docs/libmorsedec-comparison.md).
+
+## License
+
+Copyright (C) 2026 TheRealKamisama
+
+vail is free software: you can redistribute it and/or modify it under the terms of the GNU General
+Public License as published by the Free Software Foundation, either version 3 of the License, or (at
+your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See [LICENSE](LICENSE) for the full text.
+
+Every source file carries an `SPDX-License-Identifier: GPL-3.0-or-later` line.

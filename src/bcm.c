@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* BCM — band channel manager (03-band-channel-manager.md). */
 #include <stdlib.h>
 #include <string.h>

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* STA — element duration statistics model (05-element-segmentation.md, Part II). */
 #include <math.h>
 #include <stdlib.h>

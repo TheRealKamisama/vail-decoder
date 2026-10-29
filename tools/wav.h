@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Minimal PCM WAV reading/writing for the vail tools (16-bit mono). */
 #ifndef VAIL_WAV_H
 #define VAIL_WAV_H

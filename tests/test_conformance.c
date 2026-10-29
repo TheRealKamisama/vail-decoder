@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Conformance checks from cleanroom/13-conformance.md, plus primitive cross-checks. */
 #include <math.h>
 #include <stdio.h>
