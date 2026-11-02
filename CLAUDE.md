@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-This is the vail project: a real-time CW/Morse decoding core in C99. `cleanroom/` is the project's
+This is the vail project: a real-time CW/Morse decoding core in C99, meant to be built into firmware and
+apps, plus `cli/` (vail-cli), a product built on that core. `cleanroom/` is the project's
 development documentation, a **clean-room behavioural specification** that the implementation in
 `src/` is built from. Code must conform to `cleanroom/` (in particular `13-conformance.md`); where the
 implementation departs from it on purpose, the departure is recorded in `12-open-items.md` §E.
@@ -23,6 +24,8 @@ python3 tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show]   # CER o
 python3 tools/weak.py [--full] [--builds A,B] [--snr ..] [--cond ..] [--show]   # weak-signal grid
 python3 tools/elemcheck.py [--build DIR] [--snr -10,-12] [--cond clean]  # element errors vs ground truth
 python3 tools/lmgen.py                       # regenerates src/lm_table.h (CVD character trigram)
+python3 tools/closepair.py [--builds A,B]    # two close stations, both scored (docs/close-signals.md)
+(cd cli && make && make test)                # build/vail-cli and its end-to-end tests
 ```
 
 `./build-windows.sh` cross-compiles `build/win/vail_live.exe` (live decoding from a Windows sound input,
@@ -38,6 +41,14 @@ Weak-signal work is measured with `tools/weak.py --builds build,build/v_NAME` (1
 25 % CER; differences under ~0.3 % in its mean are noise. `vail_decode -T` writes a per-frame trace of
 every channel (bin, floor, amplitude, SNR estimate, LLR, keyProb, carrier, noise references,
 log-odds, emitted elements, STA means, CVD characters).
+
+## The engine and `cli/`
+
+`src/` is the engine and must stay embeddable: no audio, threads, file I/O or new dependencies, and nothing in it may
+know about `cli/`. `cli/` depends on the engine and has its own `Makefile`, `tests/` and vendored
+`third_party/miniaudio` (which has no SPDX line of its own). `cli/src/band.c` reads the whole FFT through
+`vail_internal.h`, so a change to `struct vail_fe` or the window must be checked there too. A change to the engine's
+behaviour is measured with `tools/eval.py` and `tools/weak.py`; `cli/tests/e2e.py` only guards the product.
 
 ## Clean-room rules (binding, from `cleanroom/README.md` §0)
 

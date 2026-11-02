@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: ci
+on: [push, pull_request]
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./build.sh
+      - run: ./build/test_conformance
+
+  cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - run: make
+      - run: make test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vail-cli-${{ matrix.os }}
+          path: cli/build/vail-cli
+
+  cli-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: make mingw-w64-x86_64-gcc
+      - run: make
+      - run: ./build/vail-cli.exe --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vail-cli-windows
+          path: cli/build/vail-cli.exe

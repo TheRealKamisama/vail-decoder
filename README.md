@@ -1,7 +1,13 @@
 # vail-decoder
 
-A real-time CW (Morse code) decoder core in portable C99, with no dependencies beyond the C math
-library. It is named after Alfred Vail, who worked with Samuel Morse on the telegraph and the code.
+A real-time CW (Morse code) decoder core in portable C99, with no dependencies beyond the C library,
+made to be built into firmware and apps. It is named after Alfred Vail, who worked with Samuel Morse on
+the telegraph and the code.
+
+| Part | What it is |
+| --- | --- |
+| `src/` | **The engine.** Nothing else here is needed to use it. See [Library use](#library-use). |
+| [`cli/`](cli/README.md) | **vail-cli**, a product built on the engine: a command-line CW skimmer for Linux, macOS and Windows that decodes every signal a rig's sound card can hear. |
 
 vail takes 8 kHz audio. It finds every CW signal in the 200–1200 Hz band, follows each one in its
 own channel, learns each sender's timing, and produces text that is revised as more context arrives.
@@ -20,8 +26,9 @@ own channel, learns each sender's timing, and produces text that is revised as m
   sender keys, so speed changes and hand-keyed timing are followed without configuration. A bank of
   fixed-speed models catches a speed estimate that has lost track. The start of a transmission, and
   of each later over, is decoded again once the sender's timing is known.
-- **Robust to real bands.** Fading, static crashes, key clicks, a neighbouring station, receiver
-  filter slopes and drift are part of the test grid. Noise alone produces no text.
+- **Robust to real bands.** Fading, static crashes, key clicks, a weaker neighbouring station, receiver
+  filter slopes and drift are part of the test grid. Noise alone produces no text. Stations closer than
+  about 200 Hz are the known exception: see [Known limits](#known-limits).
 - **Character and word decoding.** Only codes of the table can come out. A word-level Viterbi pass
   over a template graph (dictionary words, reports, prosigns, callsign grammar) places word boundaries.
 - **Streaming and bounded.** One 10.625 ms frame (85 samples) per call. No threads and no callbacks.
@@ -50,6 +57,7 @@ CC="zig cc" ./build.sh             # on hosts without a system compiler
 python3 tools/eval.py [--quick] [--seeds N] [--show]        # character error rate over a synthetic grid
 python3 tools/weak.py [--full] [--builds A,B] [--show]      # weak-signal grid: CER against SNR, -4 to -14 dB
 python3 tools/elemcheck.py [--snr -10,-12]                  # element errors against the generator's truth
+python3 tools/closepair.py [--builds A,B]                   # two close stations, both scored
 ```
 
 `cwgen` also simulates timing jitter (`-j`), sinusoidal fading (`-F`/`-D`), Rayleigh fading (`-R`),
@@ -65,6 +73,16 @@ per-frame trace of every channel, and `-E file` writes every classified element 
 `-p HZ` locks the pitch, and `-r rec.wav` records the session for replay with `vail_decode`.
 
 ## Library use
+
+To build the engine into a firmware or an app, compile the `.c` files in `src/` with any C99 compiler and include
+`vail.h`. There is nothing to configure and no build system to adopt.
+
+- **What it needs:** the C library's `malloc` family, `qsort`, string and memory functions, and the math library.
+  `fprintf` and `fputc` are only for the debug traces, which stay off unless a tool asks for them.
+- **What it does not do:** no threads, callbacks, file or audio I/O. The host supplies 8 kHz samples and polls for
+  text.
+- **Resources:** about 180 KB per live channel, and about 350× real time on one desktop core, in double-precision math.
+- **Threads:** a channel counter and lookup tables are shared by all instances, so use the engine from one thread.
 
 ```c
 #include "vail.h"
@@ -130,6 +148,13 @@ fading, interference, impulse noise, drift, short messages), the overall charact
 **0.2 %** (it was 3.7 %). Details and the changes behind these numbers are in
 [docs/weak-signal.md](docs/weak-signal.md). An earlier head-to-head comparison with a related decoder
 is in [docs/libmorsedec-comparison.md](docs/libmorsedec-comparison.md).
+
+## Known limits
+
+- **Close stations.** Closer than about 200 Hz, stations lose much of their text, usually the weaker one's. The
+  cause is known and a candidate fix exists, but it is not ready: see [docs/close-signals.md](docs/close-signals.md).
+- **Band.** One engine searches for signals from about 280 to 1120 Hz. A host that wants a wider band can run one
+  engine per slice of the spectrum, as `cli/src/band.c` does.
 
 ## License
 

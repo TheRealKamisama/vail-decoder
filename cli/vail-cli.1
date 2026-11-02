@@ -1,0 +1,77 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.TH VAIL-CLI 1 "2026-11-03" "vail-cli 0.1.0" "User Commands"
+.SH NAME
+vail-cli \- decode every CW (Morse) signal a sound card can hear
+.SH SYNOPSIS
+.B vail-cli
+.RI [ options ]
+.RI [ file ]
+.SH DESCRIPTION
+.B vail-cli
+decodes all CW signals between 200 and 3900 Hz at once, using the vail engine, and prints what they send
+as lines of text. It listens to the system's default sound input unless told otherwise.
+.PP
+A
+.I file
+may be WAV, FLAC or MP3. A file of
+.B \-
+reads raw signed 16-bit little-endian samples, 8 kHz mono, from standard input.
+.SH OPTIONS
+.TP
+.BR \-l ", " \-\-list
+List the sound input devices and exit.
+.TP
+.BR \-d ", " \-\-device " " \fIDEV\fR
+Use this device: its number in the list, or any part of its name, in upper or lower case, that matches
+only one device.
+.TP
+.BR \-b ", " \-\-band " " \fILO\-HI\fR
+Only decode signals between
+.I LO
+and
+.I HI
+Hz.
+.TP
+.BR \-r ", " \-\-record " " \fIFILE\fR
+Also record the audio to a WAV file, at 8 kHz, for replaying later.
+.TP
+.BR \-h ", " \-\-help
+Show the help and exit.
+.TP
+.BR \-V ", " \-\-version
+Show the version and exit.
+.SH OUTPUT
+Standard output carries one line for each finished piece of text:
+.PP
+.RS
+.nf
+15:33:16   500  CQ CQ CQ DE K1ABC K1ABC K1ABC PSE K
+.fi
+.RE
+.PP
+The fields are the time the text started, the pitch in Hz, and the text. The time is UTC for a sound device
+and the time from the start for a file or a stream. Lower-case letters are prosigns.
+.PP
+A line is printed once its text is final: when the signal has been quiet for 4 seconds, or when 60 characters
+can no longer be revised by the decoder. On a terminal, signals still being heard and the input level are
+shown below the finished lines. They are never written to a pipe or a file.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, including stopping with Ctrl+C.
+.TP
+.B 1
+A runtime error, such as a missing device or a device that stops.
+.TP
+.B 2
+A usage error.
+.SH EXAMPLES
+.nf
+vail-cli -l
+vail-cli -d "USB Audio"
+vail-cli -d 2 -b 500-1500 -r session.wav
+vail-cli | grep --line-buffered K1ABC
+vail-cli recording.wav > text.log
+.fi
+.SH SEE ALSO
+https://github.com/TheRealKamisama/vail-decoder
