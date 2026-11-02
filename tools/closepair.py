@@ -5,9 +5,11 @@
   tools/closepair.py [--builds DIR[,DIR...]] [--seeds N] [--spacings 60,80,...] [--show]
 
 The first station is at 800 Hz, 25 WPM, SNR 15 dB in 2500 Hz. The second is above it at 18 WPM, level with
-it or 15 dB down. Each cell is the mean CER, in percent, of the first and second station. Word spacing is
-not scored. Each case is synthesised once by DIR/cwgen of the first build and decoded by every build, so
-builds are compared on identical audio. See docs/close-signals.md.
+it or 15 dB down. Each cell is the mean CER, in percent, of the first and second station; every channel within
+40 Hz of a station counts towards it, so a ghost that close shows up as a station's errors as well as in the
+ghost row, which counts the letters on channels other than each station's longest. Word spacing is not scored.
+Each case is synthesised once by DIR/cwgen of the first build and decoded by every build, so builds are compared
+on identical audio. See docs/close-signals.md.
 """
 import argparse
 import os
@@ -44,9 +46,11 @@ def cer(heard, sent):
 
 
 def decode(build, path, second_hz):
-    """The text of each station: every channel goes to the nearest station within MATCH_HZ."""
+    """The text of each station, and the ghost letters. Every channel goes to the nearest station within MATCH_HZ;
+    a station's ghosts are the letters of all its channels but the longest, and any channel near no station."""
     out = subprocess.run([os.path.join(build, "vail_decode"), "-a", path], capture_output=True, text=True).stdout
     heard = {PITCH: [], second_hz: []}
+    ghosts = 0
     for line in out.splitlines():
         m = re.match(r"\s*(\d+) Hz: (.*)", line)
         if not m:
@@ -55,7 +59,12 @@ def decode(build, path, second_hz):
         nearest = min(heard, key=lambda s: abs(s - hz))
         if abs(nearest - hz) <= MATCH_HZ:
             heard[nearest].append(m[2])
-    return " ".join(heard[PITCH]), " ".join(heard[second_hz])
+        else:
+            ghosts += len(letters(m[2]))
+    for texts in heard.values():
+        if texts:
+            ghosts += sum(len(letters(t)) for t in texts) - max(len(letters(t)) for t in texts)
+    return " ".join(heard[PITCH]), " ".join(heard[second_hz]), ghosts
 
 
 def case(builds, tmp, spacing, rel_db, pair, seed):
@@ -65,8 +74,8 @@ def case(builds, tmp, spacing, rel_db, pair, seed):
                     "-r", str(100 + seed), "-S", "%d:18:%d:%s" % (PITCH + spacing, rel_db, second)], check=True)
     results = {}
     for b in builds:
-        a, c = decode(b, path, PITCH + spacing)
-        results[b] = (cer(a, first), cer(c, second), a, c)
+        a, c, g = decode(b, path, PITCH + spacing)
+        results[b] = (cer(a, first), cer(c, second), a, c, g)
     os.unlink(path)
     return results
 
@@ -89,10 +98,13 @@ def main():
             print("%-24s" % "build (first/second)" + "".join("%9d" % s for s in spacings))
             for b in builds:
                 row = "%-24s" % os.path.basename(b.rstrip("/"))
+                ghost = "%-24s" % "  ghost letters per case"
                 for s in spacings:
                     rs = [r[b] for r in results[s]]
                     row += "%9s" % ("%.0f/%.0f" % (sum(r[0] for r in rs) / len(rs), sum(r[1] for r in rs) / len(rs)))
-                print(row, flush=True)
+                    ghost += "%9.1f" % (sum(r[4] for r in rs) / len(rs))
+                print(row)
+                print(ghost, flush=True)
                 if args.show:
                     for s in spacings:
                         for r in results[s]:

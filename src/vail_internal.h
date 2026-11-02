@@ -164,6 +164,15 @@ typedef struct { float keyLogOdds, riseLogOdds, fallLogOdds; } SegObs;
 #ifndef LIK_CAR_OFF
 #define LIK_CAR_OFF           0.6f
 #endif
+/* tuning: the own noise estimate survives a neighbour raising one side, which removes the upper bound that
+ * otherwise keeps it honest. Frames above LIK_OWN_REJECT x the noise do not train it (a mark's edge, a
+ * neighbour's skirt), and with too few key-up frames to go on (a run of dashes) the noise stays at the last
+ * estimate that had enough. 0: those frames enter capped at LIK_OWN_CAP x the lower side, and the fallback
+ * is the higher side */
+#ifndef LIK_TUNE_OWN_NOISE
+#define LIK_TUNE_OWN_NOISE    1
+#endif
+#define LIK_OWN_REJECT        12.0   /* exponential noise exceeds this x its mean once in 160000 frames */
 #define LIK_QRN_RATIO         2.0f   /* a frame whose broadband level exceeds this x the noise ... */
 #define LIK_QRN_REL           0.05f  /* ... and this fraction of the centre bin's power is impulsive */
 #define LIK_LLR_CLAMP         20.0f  /* per-frame log-odds handed to SEG are limited to +-this */
@@ -198,6 +207,7 @@ typedef struct {
     double peakEx[2 * LIK_PEAK_SPAN + 1];  /* key-down excess power of centre - span .. centre + span */
     int peakHold;
     float noise, noiseL, noiseR, noiseOwn; /* noise estimates: used, left, right, own key-up frames */
+    float noiseHeld;                       /* the own estimate when it last had enough key-up frames */
     float llr;                             /* LLR of the output frame */
 } Lik;
 
@@ -589,6 +599,11 @@ void sig_process_frame(Sig *s, const float *spectrum, const float *peakRatio, fl
 #endif
 #define BCM_TEXT_DECAY         0.99f
 #define BCM_MIN_TEXT_RATE      1.5f
+/* tuning: a channel carries on undisturbed when it stops being current; 0 flushes it, which is a false
+ * carrier drop in the middle of whatever it is decoding */
+#ifndef BCM_TUNE_KEEP_ON_SWITCH
+#define BCM_TUNE_KEEP_ON_SWITCH 1
+#endif
 #define BCM_PEAK_DECAY         0.998f   /* per frame, of the band's peak power (ENV dynamic range) */
 
 enum { CH_STATE_NEW = 0, CH_STATE_DECODING, CH_STATE_PAUSED, CH_STATE_DEAD };

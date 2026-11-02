@@ -98,9 +98,8 @@ ten at once, the slice overlaps, a receiver's filter, clipping, long messages, a
 
 ## Known limits
 
-- Stations closer than about 200 Hz are decoded less accurately: at 100 Hz, expect many wrong characters. The
-  engine's detector mistakes a strong neighbour for a static crash. See
-  [docs/close-signals.md](../docs/close-signals.md) for the cause and a candidate fix.
+- Stations of similar strength are separated down to about 60 Hz apart, and a station 15 dB below its neighbour
+  down to about 80 Hz. Closer than that, expect lost text. See [docs/close-signals.md](../docs/close-signals.md).
 - Deep, slow fading costs characters, as it does for the engine on its own.
 - It needs a few seconds of a sender's keying to learn their timing before any text comes out.
 - Audio input only: there is no I/Q input yet, so the bandwidth is what the rig's audio carries, up to 3.9 kHz.

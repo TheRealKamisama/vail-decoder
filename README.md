@@ -27,8 +27,8 @@ own channel, learns each sender's timing, and produces text that is revised as m
   fixed-speed models catches a speed estimate that has lost track. The start of a transmission, and
   of each later over, is decoded again once the sender's timing is known.
 - **Robust to real bands.** Fading, static crashes, key clicks, a weaker neighbouring station, receiver
-  filter slopes and drift are part of the test grid. Noise alone produces no text. Stations closer than
-  about 200 Hz are the known exception: see [Known limits](#known-limits).
+  filter slopes and drift are part of the test grid. Noise alone produces no text. Stations of similar
+  strength are separated down to about 60 Hz apart: see [Known limits](#known-limits).
 - **Character and word decoding.** Only codes of the table can come out. A word-level Viterbi pass
   over a template graph (dictionary words, reports, prosigns, callsign grammar) places word boundaries.
 - **Streaming and bounded.** One 10.625 ms frame (85 samples) per call. No threads and no callbacks.
@@ -150,8 +150,9 @@ is in [docs/libmorsedec-comparison.md](docs/libmorsedec-comparison.md).
 
 ## Known limits
 
-- **Close stations.** Closer than about 200 Hz, stations lose much of their text, usually the weaker one's. The
-  cause is known and a candidate fix exists, but it is not ready: see [docs/close-signals.md](docs/close-signals.md).
+- **Close stations.** Stations of similar strength copy cleanly down to about 60 Hz apart, and a station 15 dB below
+  its neighbour down to about 80 Hz. A station 15 dB down at 60 Hz is usually found only when its neighbour stops, and
+  at 40 Hz the second station loses about one letter in ten. See [docs/close-signals.md](docs/close-signals.md).
 - **Band.** One engine searches for signals from about 280 to 1120 Hz. A host that wants a wider band can run one
   engine per slice of the spectrum, as `cli/src/band.c` does.
 

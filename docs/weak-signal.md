@@ -82,7 +82,9 @@ probabilities:
   kept between the mean levels of the bins 6–16 to either side. A neighbouring station raises one side,
   and a receiver filter slope lowers one side. Neither moves the estimate outside the band set by the two
   sides. The noise never goes below 50 dB under the strongest bin, so digital silence or key-click
-  splatter does not look like a signal.
+  splatter does not look like a signal. A raised side also lifts the ceiling on the own average, so the
+  average has to be sound by itself (`LIK_TUNE_OWN_NOISE`): frames above 12 times the noise do not train it,
+  and with too few key-up frames it holds its last value. See [close-signals.md](close-signals.md).
 - **SNR.** An EM step on 3-frame posteriors, with a triangular window of ±35 frames around the output
   frame. It follows fading without a short, noisy window.
 - **Static crashes and clicks.** A frame whose side bins (median) are raised well above the noise and to

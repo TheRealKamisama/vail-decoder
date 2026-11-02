@@ -38,7 +38,7 @@ void bcm_set_current(Bcm *b, Channel *ch)                  /* 03 §4.10 SetCurre
     if (b->currentChannel == ch) return;
     if (b->currentChannel) {
         b->currentChannel->isCurrent = 0;
-        b->currentChannel->pipeline->flushRequest = 1;
+        if (!BCM_TUNE_KEEP_ON_SWITCH) b->currentChannel->pipeline->flushRequest = 1;
     }
     b->currentChannel = ch;
     if (ch) ch->isCurrent = 1;

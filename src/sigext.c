@@ -335,7 +335,8 @@ void env_apply_lik(Env *e, float power, const float *beside, float noiseLeft, fl
      * must not run away when the model is off */
     lo = L->noiseL < L->noiseR ? L->noiseL : L->noiseR;
     hi = L->noiseL < L->noiseR ? L->noiseR : L->noiseL;
-    noise = L->goSum > 8.0 ? L->noiseOwn : hi;
+    if (L->goSum > 8.0) L->noiseHeld = L->noiseOwn;
+    noise = L->goSum > 8.0 ? L->noiseOwn : (LIK_TUNE_OWN_NOISE && L->noiseHeld > 0.0f ? L->noiseHeld : hi);
     if (noise < lo) noise = lo;
     if (noise > hi) noise = hi;
     if (!(noise > noiseMin)) noise = noiseMin;
@@ -352,6 +353,7 @@ void env_apply_lik(Env *e, float power, const float *beside, float noiseLeft, fl
         g = 1.0 / (1.0 + exp(-z));
         go = 1.0 - g;
         if (frame_noise(L, u, noise) > noise) g = go = 0.0;   /* impulsive frames do not train the model */
+        if (LIK_TUNE_OWN_NOISE && L->x[u & M] > LIK_OWN_REJECT * noise) go = 0.0;
         L->g[u & M] = (float)g;
         L->gy[u & M] = (float)(g * (L->x[u & M] / noise - 1.0));
         L->go[u & M] = (float)go;

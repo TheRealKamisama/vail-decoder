@@ -24,7 +24,7 @@ python3 tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show]   # CER o
 python3 tools/weak.py [--full] [--builds A,B] [--snr ..] [--cond ..] [--show]   # weak-signal grid
 python3 tools/elemcheck.py [--build DIR] [--snr -10,-12] [--cond clean]  # element errors vs ground truth
 python3 tools/lmgen.py                       # regenerates src/lm_table.h (CVD character trigram)
-python3 tools/closepair.py [--builds A,B]    # two close stations, both scored (docs/close-signals.md)
+python3 tools/closepair.py [--builds A,B]    # two close stations, both scored, ghosts counted (docs/close-signals.md)
 (cd cli && make && make test)                # build/vail-cli and its end-to-end tests
 ```
 
@@ -104,7 +104,8 @@ FE → BCM → for each channel: SIG{ SPM → ENV → SEG ⇄ STA (⇄ SPD) → 
   SNR estimate; `LIK_TUNE_PEAK` keyed peak tracking), `SEG_TUNE_NORM_DUR` (normalised duration hazards), `SPD_TUNE` (speed bank),
   `CVD_TUNE` (characters decoded directly from SEG's per-frame input by `cvd.c`; CHR is then only the
   code table), `SIG_TUNE_REPLAY` / `SIG_TUNE_OVER` (re-decoding once the timing is learned, per
-  transmission), `BCM_TUNE_TEXT_RATE` (a channel needs sustained text to become current). SEG's input
+  transmission), `BCM_TUNE_TEXT_RATE` (a channel needs sustained text to become current),
+`LIK_TUNE_OWN_NOISE` and `BCM_TUNE_KEEP_ON_SWITCH` (close stations, `docs/close-signals.md`). SEG's input
   is `SegObs` (log-odds of key-down, rising and falling edge frames); with `ENV_TUNE_LIK=0` it is the
   reference keyProb as log-odds.
 
