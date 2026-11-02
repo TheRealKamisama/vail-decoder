@@ -39,12 +39,12 @@ own channel, learns each sender's timing, and produces text that is revised as m
 
 ## Build
 
-There is no Makefile. Any C99 compiler works:
+The engine has no Makefile. Any C99 compiler works (`cli/` has its own):
 
 ```sh
 ./build.sh                         # build/vail_decode, build/cwgen, build/test_conformance
 CC="zig cc" ./build.sh             # on hosts without a system compiler
-./build-windows.sh                 # cross-compiles build/win/vail_live.exe and vail_decode.exe
+./build-windows.sh                 # cross-compiles build/win/vail_decode.exe
 ```
 
 ## Tools
@@ -69,8 +69,7 @@ header comment of `tools/cwgen.c`.
 emulates a host applying delete counts, `-v` prints state/pitch/SNR/WPM, `-T file` writes a
 per-frame trace of every channel, and `-E file` writes every classified element of every channel.
 
-`vail_live` (Windows) decodes from a sound input device: `-l` lists devices, `-d N` selects one,
-`-p HZ` locks the pitch, and `-r rec.wav` records the session for replay with `vail_decode`.
+To decode live from a sound device, on any platform, use [vail-cli](cli/README.md).
 
 ## Library use
 

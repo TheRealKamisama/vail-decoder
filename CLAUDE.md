@@ -28,9 +28,8 @@ python3 tools/closepair.py [--builds A,B]    # two close stations, both scored (
 (cd cli && make && make test)                # build/vail-cli and its end-to-end tests
 ```
 
-`./build-windows.sh` cross-compiles `build/win/vail_live.exe` (live decoding from a Windows sound input,
-`tools/vail_live.c`, waveIn API; `-l` lists devices, `-d N`, `-p HZ`, `-r rec.wav`) and
-`vail_decode.exe`. Recordings made with `-r` can be replayed here with `vail_decode` for tuning.
+`./build-windows.sh` cross-compiles `build/win/vail_decode.exe`. `vail-cli -r rec.wav` records a live session
+for replaying here with `vail_decode` for tuning.
 
 `eval.py` uses `VAIL_BUILD` (default `build/`) so tuning variants can be compared;
 `tools/ab.sh NAME "-DSTA_TUNE_GRID_FIT=0" [--seeds 4]` builds `build/v_NAME` with those flags and
