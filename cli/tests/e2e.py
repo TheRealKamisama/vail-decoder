@@ -767,8 +767,9 @@ class Terminal:
         return None
 
 
-def stream_then_hold(tmp, *stations, tail=7):
-    """A pipe carrying a station, and then staying open with nothing on it."""
+def stream_then_hold(tmp, *stations, tail=7, end=False):
+    """A pipe carrying a station, and then staying open with nothing on it, or with end, closing once all of it is written.
+    Closing the write end from outside while the write is blocked cuts the stream short on macOS, after one pipe buffer."""
     st = make_stations(tmp, list(stations))
     samples = read_wav(mix(tmp, "term", st, 15, seconds=None))
     data = samples.tobytes() + b"\0\0" * (tail * RATE)
@@ -778,6 +779,8 @@ def stream_then_hold(tmp, *stations, tail=7):
             os.write(writer, data)
         except OSError:
             pass
+        if end:
+            os.close(writer)
     threading.Thread(target=feed, daemon=True).start()
     return reader, writer
 
@@ -887,7 +890,8 @@ def check_view_restores_terminal():
         problems.append("no view: %r" % seen[-200:])
     if during[3] == before[3]:
         problems.append("the view did not change the terminal's settings, so this test shows nothing")
-    if after[3] != before[3]:
+    state = getattr(termios, "PENDIN", 0)                    # the kernel's own: BSD sets it on going back to line editing
+    if after[3] & ~state != before[3] & ~state:
         problems.append("local modes not restored: %o, was %o" % (after[3], before[3]))
     if status != 0:
         problems.append("exit %r" % status)
@@ -960,10 +964,9 @@ def check_no_view_on_terminal():
             problems.append("a file: exit %r: %r" % (status, text[-200:]))
         # So is a stream with --plain, or on a terminal that cannot show the view.
         for args, term in ((["--plain", "-"], "xterm"), (["-"], "dumb")):
-            reader, writer = stream_then_hold(tmp, {"hz": 800, "text": QSO[0]})
+            reader, _ = stream_then_hold(tmp, {"hz": 800, "text": QSO[0]}, end=True)
             t = Terminal(args, stdin=reader, term=term)
             os.close(reader)
-            os.close(writer)
             status = t.finish(30)
             text = t.data.decode("latin-1")
             if status != 0 or "K1ABC K1ABC" not in text or "\x1b" in text:
