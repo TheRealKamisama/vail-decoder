@@ -49,6 +49,13 @@ know about `cli/`. `cli/` depends on the engine and has its own `Makefile`, `tes
 `vail_internal.h`, so a change to `struct vail_fe` or the window must be checked there too. A change to the engine's
 behaviour is measured with `tools/eval.py` and `tools/weak.py`; `cli/tests/e2e.py` only guards the product.
 
+## Versions and releases
+
+The engine (`VAIL_VERSION` in `src/vail.h`) and vail-cli (`VERSION` in `cli/src/main.c` and the `.TH` line of
+`cli/vail-cli.1`) are versioned separately, and `cli/tests/e2e.py` checks that those places agree. Pushing a tag
+`vail-cli-vX.Y.Z` runs `.github/workflows/release.yml`, which builds and tests every platform, refuses a tag that differs
+from the binary's version, and creates a draft release. Check the draft, then `gh release edit TAG --draft=false`.
+
 ## Clean-room rules (binding, from `cleanroom/README.md` §0)
 
 Every edit to the document set must follow these:

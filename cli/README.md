@@ -44,12 +44,20 @@ isn't. Both channels of a stereo input are mixed, so dual-receiver rigs decode b
 
 Text can be revised as the decoder learns more, so a line is printed only once it is final: when a signal has
 been quiet for 4 seconds, or as soon as 60 characters are beyond the decoder's reach. Lower-case letters are
-prosigns (`ar`, `sk`, `bk`, ...). Exit status is 0 on success or Ctrl+C, 1 on a runtime error such as a missing
-device or a device that stops, and 2 on a usage error.
+prosigns (`ar`, `sk`, `bk`, ...).
+
+Exit status is 0 on success, on Ctrl+C, or when whatever was reading the output goes away, as in `vail-cli | head`. It is
+1 on a runtime error such as a missing device, a device that stops, or output that cannot be written, and 2 on a usage
+error. If a recording cannot be written, that is reported at once, decoding goes on without it, and the status is 1.
 
 ## Install
 
-Only a C compiler is needed; audio libraries are found at run time.
+Binaries for Linux (x86_64), macOS (Apple silicon and Intel) and Windows (x86_64) are on the
+[releases page](https://github.com/TheRealKamisama/vail-decoder/releases). Each archive holds the program, its man page,
+this README and the license. The macOS binaries are not signed, so one downloaded with a browser first needs
+`xattr -d com.apple.quarantine vail-cli`.
+
+To build it, only a C compiler is needed; audio libraries are found at run time.
 
 ```sh
 git clone https://github.com/TheRealKamisama/vail-decoder
@@ -94,7 +102,7 @@ python3 tests/e2e.py --table   # the same, showing every station's text and ever
 ```
 
 Test audio is synthesised with the engine's own generator, covering noise, stations from 250 to 3400 Hz, up to
-ten at once, the slice overlaps, a receiver's filter, clipping, long messages, and file and device errors.
+ten at once, the slice overlaps, a receiver's filter, clipping, long messages, and file, device and write errors.
 
 ## Known limits
 

@@ -159,6 +159,15 @@ is in [docs/libmorsedec-comparison.md](docs/libmorsedec-comparison.md).
 - **Band.** One engine searches for signals from about 280 to 1120 Hz. A host that wants a wider band can run one
   engine per slice of the spectrum, as `cli/src/band.c` does.
 
+## Versions
+
+The engine and vail-cli have separate version numbers, as MAJOR.MINOR.PATCH. The engine's is `VAIL_VERSION` in
+`src/vail.h`, and a host built separately can ask for it with `vail_version()`. `vail-cli --version` gives its own and that
+of the engine in it. While a major number is 0, a minor release may change the interface.
+
+Binaries of vail-cli are on the [releases page](https://github.com/TheRealKamisama/vail-decoder/releases), tagged
+`vail-cli-vX.Y.Z`.
+
 ## License
 
 Copyright (C) 2026 TheRealKamisama

@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# A tag vail-cli-vX.Y.Z builds and tests vail-cli on every platform and creates a draft release with the binaries.
+# Nothing is public until the draft is published: gh release edit vail-cli-vX.Y.Z --draft=false
+name: release-vail-cli
+on:
+  push:
+    tags: ['vail-cli-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-22.04, platform: linux-x86_64 }   # the oldest runner, so the binary runs on older systems
+          - { os: macos-latest, platform: macos-arm64 }
+          - { os: macos-15-intel, platform: macos-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: make CFLAGS=-O2 test
+        working-directory: cli
+      - run: cli/package.sh ${{ matrix.platform }} "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: vail-cli-*.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: make zip mingw-w64-x86_64-gcc mingw-w64-x86_64-python
+      - run: make CFLAGS=-O2 test
+        working-directory: cli
+      - run: sh cli/package.sh windows-x86_64 "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: vail-cli-*.zip
+
+  draft:
+    needs: [unix, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - run: sha256sum * > SHA256SUMS
+        working-directory: assets
+      - run: >
+          gh release create "$GITHUB_REF_NAME" assets/* --draft --verify-tag
+          --title "vail-cli ${GITHUB_REF_NAME#vail-cli-v}"
+          --notes "Binaries of vail-cli, with their checksums in SHA256SUMS."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
