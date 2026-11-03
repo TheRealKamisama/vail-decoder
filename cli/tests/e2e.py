@@ -424,10 +424,10 @@ def check_version():
     if r.returncode or not m:
         return ["--version: exit %d, %r" % (r.returncode, r.stdout)]
     problems = []
-    with open(os.path.join(ROOT, "vail-cli.1")) as f:
+    with open(os.path.join(ROOT, "vail-cli.1"), encoding="utf-8") as f:
         if '"vail-cli %s"' % m.group(1) not in f.read():
             problems.append("the man page does not say vail-cli %s" % m.group(1))
-    with open(os.path.join(ROOT, "..", "src", "vail.h")) as f:
+    with open(os.path.join(ROOT, "..", "src", "vail.h"), encoding="utf-8") as f:
         if not re.search(r'#define VAIL_VERSION\s+"%s"' % re.escape(m.group(2)), f.read()):
             problems.append("src/vail.h does not say %s" % m.group(2))
     return problems
@@ -656,7 +656,7 @@ def check_documented():
     named = set(re.findall(r"^\s+-\w, (--[a-z]+)", r.stdout, re.M))
     problems = [] if len(named) >= 15 else ["--help names only %r" % sorted(named)]
     for name in ("vail-cli.1", "README.md"):
-        with open(os.path.join(ROOT, name)) as f:
+        with open(os.path.join(ROOT, name), encoding="utf-8") as f:
             text = f.read().replace("\\-", "-")
         missing = [o for o in sorted(named) if o not in text]
         if missing:
@@ -821,27 +821,40 @@ def check_view_on_terminal():
 
 
 def check_view_restores_terminal():
-    """After the view, the terminal has its old settings: echo and line editing come back."""
+    """After the view, the terminal has its old settings: echo and line editing come back.
+
+    A process stays as the session's leader, as a shell would. On macOS, a terminal stops answering once its leader has exited."""
     if not TERMINAL or not view_is_built():
         return []
     with tempfile.TemporaryDirectory() as tmp:
         reader, writer = stream_then_hold(tmp, {"hz": 800, "text": "CQ"}, tail=0)
         master, slave = pty.openpty()
+        status_r, status_w = os.pipe()
+        hold_r, hold_w = os.pipe()
+        status = None
+        before = termios.tcgetattr(slave)
+        pid = os.fork()
         try:
-            before = termios.tcgetattr(slave)
-            pid = os.fork()
             if pid == 0:
                 try:
+                    os.close(hold_w)
                     os.setsid()
                     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
                     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
-                    os.dup2(reader, 0)
-                    os.dup2(slave, 1)
-                    os.dup2(slave, 2)
-                    os.execve(CLI, [CLI, "-"], dict(os.environ, TERM="xterm"))
+                    program = os.fork()
+                    if program == 0:
+                        os.dup2(reader, 0)
+                        os.dup2(slave, 1)
+                        os.dup2(slave, 2)
+                        os.execve(CLI, [CLI, "-"], dict(os.environ, TERM="xterm"))
+                    _, st = os.waitpid(program, 0)
+                    os.write(status_w, b"%d" % os.waitstatus_to_exitcode(st))
+                    os.read(hold_r, 1)                       # until the settings have been read
                 finally:
                     os._exit(127)
             os.close(reader)
+            os.close(status_w)
+            os.close(hold_r)
             seen = b""
             end = time.time() + 15
             while b"SIGNALS" not in seen and time.time() < end:
@@ -851,18 +864,22 @@ def check_view_restores_terminal():
             os.write(master, b"q")
             os.close(writer)
             end = time.time() + 15
-            status = None
             while time.time() < end and status is None:
-                if select.select([master], [], [], 0.05)[0]:
+                ready = select.select([master, status_r], [], [], 0.05)[0]
+                if master in ready:
                     try:
                         os.read(master, 65536)
                     except OSError:
                         pass
-                got, st = os.waitpid(pid, os.WNOHANG)
-                if got:
-                    status = os.waitstatus_to_exitcode(st)
+                if status_r in ready:
+                    status = int(os.read(status_r, 16) or b"-1")
             after = termios.tcgetattr(slave)
         finally:
+            if status is None:
+                os.kill(pid, signal.SIGKILL)
+            os.close(hold_w)
+            os.waitpid(pid, 0)
+            os.close(status_r)
             os.close(master)
             os.close(slave)
     problems = []
@@ -980,6 +997,14 @@ TERMINAL_CHECKS = {"view-on-terminal": check_view_on_terminal, "view-restores-te
                    "no-view-on-terminal": check_no_view_on_terminal}
 
 
+def outcome(check):
+    """A check that raises has failed, and the checks after it still run."""
+    try:
+        return check()
+    except Exception as e:
+        return ["%s: %s" % (type(e).__name__, e)]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--table", action="store_true")
@@ -993,7 +1018,7 @@ def main():
         results = {n: pool.submit(run_case, n, table) for n in names}
         results.update({n: pool.submit(CHECKS[n]) for n in checks})
         for n in names + checks:
-            problems = results[n].result()
+            problems = outcome(results[n].result)
             failed += bool(problems)
             print("%-4s %s%s" % ("FAIL" if problems else "ok", n, ": " + "; ".join(problems) if problems else ""))
             if args.table and n in table:
@@ -1004,7 +1029,7 @@ def main():
                     print("       ghost %5d Hz  t=%3d  %s" % (hz, t, text))
     terminal = [n for n in TERMINAL_CHECKS if args.filter in n]
     for n in terminal:
-        problems = TERMINAL_CHECKS[n]()
+        problems = outcome(TERMINAL_CHECKS[n])
         failed += bool(problems)
         print("%-4s %s%s" % ("FAIL" if problems else "ok", n, ": " + "; ".join(problems) if problems else ""))
     print("%d of %d failed" % (failed, len(names) + len(checks) + len(terminal)))
