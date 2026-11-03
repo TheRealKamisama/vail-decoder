@@ -25,6 +25,10 @@
 #include <string.h>
 #include "wav.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846          /* not every C library declares it under -std=c99 */
+#endif
+
 #define RATE 8000
 #define MAXSIG 4
 
