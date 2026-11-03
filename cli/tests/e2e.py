@@ -349,8 +349,10 @@ def check_band_option():
         problems = []
         if rc or not lines or any(not 1000 <= l[1] <= 2000 for l in lines):
             problems.append("-b 1000-2000 gave %r" % (lines,))
-        if rc == 0 and read_wav(rec)[:8000] != read_wav(path)[:8000]:
-            problems.append("-r did not record the input")
+        if rc == 0:
+            sent, recorded = read_wav(path), read_wav(rec)
+            if recorded[:len(sent)] != sent or not 0 <= len(recorded) - len(sent) < 85:   # the last frame is filled out
+                problems.append("-r recorded %d samples of %d, or other samples" % (len(recorded), len(sent)))
     return problems
 
 
@@ -365,8 +367,56 @@ def check_errors():
     return problems
 
 
+def check_write_errors():
+    """Output that cannot be written exits 1 and says why. A reader that has gone away only stops the run, with exit 0."""
+    problems = []
+
+    def expect(what, args, want, stdout, complaint):
+        r = subprocess.run([CLI, *args], stdout=stdout, stderr=subprocess.PIPE, text=True)
+        if r.returncode != want or (complaint not in r.stderr if complaint else r.stderr):
+            problems.append("%s: exit %d, stderr %r" % (what, r.returncode, r.stderr))
+        return r
+
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, [{"hz": 700, "wpm": 25, "text": QSO[0]}])
+        path = mix(tmp, "write", st, 15)
+        cannot = "vail-cli: cannot write"
+        readonly = os.open(path, os.O_RDONLY)                # writing to this fails on every platform
+        expect("text to a read-only stdout", [path], 1, readonly, cannot)
+        expect("--version to a read-only stdout", ["--version"], 1, readonly, cannot)
+        os.close(readonly)
+        reader, writer = os.pipe()
+        os.close(reader)
+        expect("text with the reader gone", [path], 0, writer, None)
+        os.close(writer)
+        if os.path.exists("/dev/full"):
+            with open("/dev/full", "w") as full:
+                expect("text to /dev/full", [path], 1, full, cannot)
+                expect("--help to /dev/full", ["--help"], 1, full, cannot)
+            r = expect("recording to /dev/full", ["-r", "/dev/full", path], 1, subprocess.PIPE, cannot + " /dev/full")
+            if "K1ABC" not in r.stdout:
+                problems.append("the text stopped with the recording: %r" % r.stdout)
+    return problems
+
+
+def check_version():
+    """--version gives both versions, and they match the man page and the engine's header."""
+    r = subprocess.run([CLI, "--version"], capture_output=True, text=True)
+    m = re.fullmatch(r"vail-cli (\d+\.\d+\.\d+) \(vail engine (\d+\.\d+\.\d+)\)\n", r.stdout)
+    if r.returncode or not m:
+        return ["--version: exit %d, %r" % (r.returncode, r.stdout)]
+    problems = []
+    with open(os.path.join(ROOT, "vail-cli.1")) as f:
+        if '"vail-cli %s"' % m.group(1) not in f.read():
+            problems.append("the man page does not say vail-cli %s" % m.group(1))
+    with open(os.path.join(ROOT, "..", "src", "vail.h")) as f:
+        if not re.search(r'#define VAIL_VERSION\s+"%s"' % re.escape(m.group(2)), f.read()):
+            problems.append("src/vail.h does not say %s" % m.group(2))
+    return problems
+
+
 CHECKS = {"long-text": check_long_text_is_whole, "repeating-text": check_repeating_text_is_whole, "overs": check_overs, "carrier": check_carrier, "formats": check_formats,
-          "band-option": check_band_option, "errors": check_errors}
+          "band-option": check_band_option, "errors": check_errors, "write-errors": check_write_errors, "version": check_version}
 
 
 def main():

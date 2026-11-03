@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +31,9 @@ struct audio {
 
 struct audio_rec {
     ma_encoder encoder;
+    FILE *file;                              /* ours, as miniaudio does not report a failed write to its own files */
+    const char *path;
+    int error;                               /* errno of the first failure */
 };
 
 static void complain(const char *what, ma_result r)
@@ -251,29 +255,66 @@ void audio_close(audio *a)
     free(a);
 }
 
+static void rec_failed(audio_rec *r)
+{
+    if (!r->error) r->error = errno ? errno : EIO;
+}
+
+static ma_result rec_on_write(ma_encoder *e, const void *data, size_t n, size_t *written)
+{
+    audio_rec *r = e->pUserData;
+    *written = fwrite(data, 1, n, r->file);
+    if (*written == n) return MA_SUCCESS;
+    rec_failed(r);
+    return MA_ERROR;
+}
+
+static ma_result rec_on_seek(ma_encoder *e, ma_int64 offset, ma_seek_origin origin)
+{
+    audio_rec *r = e->pUserData;
+    int whence = origin == ma_seek_origin_start ? SEEK_SET : origin == ma_seek_origin_end ? SEEK_END : SEEK_CUR;
+    if (fseek(r->file, (long)offset, whence) == 0) return MA_SUCCESS;
+    rec_failed(r);
+    return MA_ERROR;
+}
+
 audio_rec *audio_rec_open(const char *path)
 {
     audio_rec *r = calloc(1, sizeof *r);
     ma_encoder_config cfg = ma_encoder_config_init(ma_encoding_format_wav, ma_format_s16, 1, RATE);
     ma_result e;
     if (!r) return NULL;
-    e = ma_encoder_init_file(path, &cfg, &r->encoder);
+    r->path = path;
+    r->file = fopen(path, "wb");
+    if (!r->file) {
+        fprintf(stderr, "vail-cli: cannot write %s: %s\n", path, strerror(errno));
+        free(r);
+        return NULL;
+    }
+    e = ma_encoder_init(rec_on_write, rec_on_seek, r, &cfg, &r->encoder);
     if (e != MA_SUCCESS) {
         fprintf(stderr, "vail-cli: cannot write %s: %s\n", path, ma_result_description(e));
+        fclose(r->file);
         free(r);
         return NULL;
     }
     return r;
 }
 
-void audio_rec_write(audio_rec *r, const int16_t *samples, int n)
+int audio_rec_write(audio_rec *r, const int16_t *samples, int n)
 {
     ma_encoder_write_pcm_frames(&r->encoder, samples, (ma_uint64)n, NULL);
+    return !r->error;
 }
 
-void audio_rec_close(audio_rec *r)
+int audio_rec_close(audio_rec *r)
 {
-    if (!r) return;
-    ma_encoder_uninit(&r->encoder);
+    int ok;
+    if (!r) return 1;
+    ma_encoder_uninit(&r->encoder);          /* this writes the length into the header */
+    if (fclose(r->file) == EOF) rec_failed(r);
+    ok = !r->error;
+    if (!ok) fprintf(stderr, "vail-cli: cannot write %s: %s\n", r->path, strerror(r->error));
     free(r);
+    return ok;
 }

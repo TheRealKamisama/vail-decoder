@@ -1,7 +1,7 @@
 # Review: the close-signals fix and vail-cli
 
-A brief review from 2026-11-03, not a deep one. **Item 1 of vail-cli has since been fixed; nothing else listed here has.**
-What to improve is still to be decided.
+A brief review from 2026-11-03, not a deep one. **Items 1 and 2 of vail-cli have since been fixed; nothing else listed
+here has.** What to improve is still to be decided.
 
 CER figures are per cent. "Against" is the same audio with `-DLIK_TUNE_OWN_NOISE=0 -DBCM_TUNE_KEEP_ON_SWITCH=0`.
 
@@ -50,8 +50,11 @@ Reproduced:
    `long-text` test used. `cli/src/band.c` inferred the message buffer's shift from its bytes, and periodic text defeats
    that. It now gets the shift from the engine with `vail_channel_dropped`, all of these print whole, and the
    `repeating-text` test guards it.
-2. **Write errors are reported as success.** `vail-cli a.wav > /dev/full` exits 0 with nothing on stderr. `main.c` treats
-   any `fflush` failure as nobody reading, while the man page and README promise exit 1.
+2. **Fixed: write errors were reported as success.** `vail-cli a.wav > /dev/full` exited 0 with nothing on stderr, and so
+   did `--version`, `--help`, `--list` and a recording to a full disk. `main.c` treated any `fflush` failure as nobody
+   reading, and miniaudio does not report a failed write to its own files. All of these now exit 1 and say why. A reader
+   that has gone away still stops the run quietly with exit 0, and a failed recording does not stop the decoding. The
+   `write-errors` test guards it.
 3. **`-b` can print a harmonic as a station.** A clipped 700 Hz station with `-b 1800-2300` prints its text at 2102 Hz. No
    engine runs for the excluded slices, so the ghost check cannot see the fundamental.
 
@@ -77,6 +80,6 @@ Found while fixing item 1, and a separate problem:
 
 ## Where I would start
 
-Item 2 of vail-cli, because it reports success after losing output. On the engine, a weak station between two
-stronger ones is the largest remaining gap on a busy band. The reviewer's suggestion there, untested, is a side reference
+Item 3 of vail-cli, the last finding reproduced here, then items 4 to 6, which can lose or double text. On the engine, a
+weak station between two stronger ones is the largest remaining gap on a busy band. The reviewer's suggestion there, untested, is a side reference
 that a neighbour's lobe cannot lift, such as a median per side.

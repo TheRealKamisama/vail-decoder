@@ -33,7 +33,7 @@ void audio_close(audio *a);
 /* A WAV recording of what is read; NULL with a message on stderr on failure. */
 typedef struct audio_rec audio_rec;
 audio_rec *audio_rec_open(const char *path);
-void audio_rec_write(audio_rec *r, const int16_t *samples, int n);
-void audio_rec_close(audio_rec *r);
+int audio_rec_write(audio_rec *r, const int16_t *samples, int n);   /* 0 once the recording has failed */
+int audio_rec_close(audio_rec *r);               /* 0 if any of it failed, with a message on stderr; r may be NULL */
 
 #endif

@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 
+#define VAIL_VERSION       "0.1.0"   /* the engine's version; hosts built separately can ask with vail_version() */
+
 #define VAIL_N_BINS        128   /* Spectrum length */
 #define VAIL_HOP_SAMPLES   85    /* new samples per frame @ 8000 Hz */
 #define VAIL_SAMPLE_RATE   8000
@@ -22,6 +24,8 @@ enum {
     API_STATE_LOCKED_PAUSE = 3,
     API_STATE_LOCKED_DECODING = 4
 };
+
+const char *vail_version(void);
 
 /* Spectrum front end (FE, 02). */
 typedef struct vail_fe vail_fe;

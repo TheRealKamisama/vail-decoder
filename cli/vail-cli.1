@@ -58,10 +58,11 @@ shown below the finished lines. They are never written to a pipe or a file.
 .SH EXIT STATUS
 .TP
 .B 0
-Success, including stopping with Ctrl+C.
+Success, including stopping with Ctrl+C or because whatever was reading the output has gone away.
 .TP
 .B 1
-A runtime error, such as a missing device or a device that stops.
+A runtime error, such as a missing device, a device that stops, or output that cannot be written. If a recording
+cannot be written, that is reported at once and decoding goes on without it.
 .TP
 .B 2
 A usage error.

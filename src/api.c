@@ -24,6 +24,8 @@ struct vail_api {
     int channelChanged;
 };
 
+const char *vail_version(void) { return VAIL_VERSION; }
+
 vail_api *API_New(void)
 {
     vail_api *h = calloc(1, sizeof *h);

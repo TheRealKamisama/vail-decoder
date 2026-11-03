@@ -199,6 +199,7 @@ static void test_api(void)
     vail_api *h = API_New();
     float sp[N_BINS];
     int i;
+    CHECK(!strcmp(vail_version(), VAIL_VERSION), "vail_version() gives %s, the header says %s", vail_version(), VAIL_VERSION);
     for (i = 0; i < N_BINS; i++) sp[i] = 0.0f;
     sp[3] = NAN; sp[4] = INFINITY;
     CHECK(API_Feed(h, sp) == API_STATE_NONE, "state with no channel");

@@ -3,6 +3,7 @@
  *
  * stdout carries finished lines and nothing else. On a terminal, a sound device's signals are also shown
  * below them while they are being heard, in a live area that is cleared before each line is printed. */
+#include <errno.h>
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
@@ -44,8 +45,24 @@ static const char USAGE[] =
 "Each line of output is: time (UTC, or from the start of a file), pitch in Hz, text.\n";
 
 static volatile sig_atomic_t g_stop = 0;
+static int g_outputFailed = 0;
 
 static void on_signal(int s) { (void)s; g_stop = 1; }
+
+/* A reader that has gone away, as in `vail-cli | head`, is only a reason to stop. Any other failure is an error. */
+static void output_failed(int err)
+{
+    if (err != EPIPE && !g_outputFailed) {
+        fprintf(stderr, "vail-cli: cannot write the output: %s\n", strerror(err));
+        g_outputFailed = 1;
+    }
+    g_stop = 1;
+}
+
+static void flush_output(void)
+{
+    if (fflush(stdout) == EOF) output_failed(errno);
+}
 
 static void sleep_ms(int ms)
 {
@@ -132,7 +149,7 @@ static void put_line(void *ctx, long frame, int hz, const char *text)
         secs = (int)(frame * FRAME_SECONDS);
     }
     printf("%02d:%02d:%02d %5d  %s\n", secs / 3600, secs / 60 % 60, secs % 60, hz, text);
-    if (fflush(stdout) == EOF) g_stop = 1;   /* nobody is reading any more */
+    flush_output();
 }
 
 static void measure_level(output *o, const int16_t *s)
@@ -182,7 +199,7 @@ static void draw_area(output *o)
     fputs(o->area, stdout);
     o->areaRows = n + 1;
     strcpy(o->lastArea, o->area);
-    if (fflush(stdout) == EOF) g_stop = 1;
+    flush_output();
 }
 
 /* ------------------------------------------------------------------------------- arguments */
@@ -208,7 +225,7 @@ static const char *option_value(int argc, char **argv, int *i)
     return *i + 1 < argc ? argv[++*i] : NULL;
 }
 
-int main(int argc, char **argv)
+static int run(int argc, char **argv)
 {
     static output o;
     const char *device = NULL, *path = NULL, *recordPath = NULL;
@@ -228,7 +245,7 @@ int main(int argc, char **argv)
             printf(USAGE, BAND_MIN_HZ, BAND_MAX_HZ);
             return 0;
         } else if (!strcmp(arg, "-V") || !strcmp(arg, "--version")) {
-            printf("vail-cli %s\n", VERSION);
+            printf("vail-cli %s (vail engine %s)\n", VERSION, vail_version());
             return 0;
         } else if (!strcmp(arg, "-l") || !strcmp(arg, "--list")) {
             list = 1;
@@ -270,7 +287,13 @@ int main(int argc, char **argv)
         r = audio_read(a, samples, VAIL_HOP_SAMPLES);
         if (r == AUDIO_END) break;
         if (r == AUDIO_WAIT) { sleep_ms(5); continue; }
-        if (rec) audio_rec_write(rec, samples, VAIL_HOP_SAMPLES);
+        if (rec && !audio_rec_write(rec, samples, VAIL_HOP_SAMPLES)) {   /* the text goes on without the recording */
+            if (o.showArea) clear_area(&o);
+            flush_output();
+            audio_rec_close(rec);
+            rec = NULL;
+            status = 1;
+        }
         if (o.showArea) measure_level(&o, samples);
         band_feed(b, samples);
         if (o.showArea && band_frame(b) % DRAW_FRAMES == 0) draw_area(&o);
@@ -278,18 +301,28 @@ int main(int argc, char **argv)
 
     if (audio_failed(a)) {
         if (o.showArea) clear_area(&o);
-        fflush(stdout);
+        flush_output();
         fprintf(stderr, "vail-cli: the sound device stopped\n");
         status = 1;
     }
     band_finish(b);
-    if (o.showArea) { clear_area(&o); fflush(stdout); }
+    if (o.showArea) { clear_area(&o); flush_output(); }
     if (audio_lost_samples(a) > 0)
         fprintf(stderr, "vail-cli: decoding fell behind: lost %.1f s of audio\n",
                 audio_lost_samples(a) / (double)VAIL_SAMPLE_RATE);
 
     band_free(b);
-    audio_rec_close(rec);
+    if (!audio_rec_close(rec)) status = 1;
     audio_close(a);
     return status;
+}
+
+int main(int argc, char **argv)
+{
+    int status = run(argc, argv);
+    /* Every path ends here, as a closing file can be the first to report a failed write. A stdout that is already closed
+     * is only a failure if there was something to write, and flushing has already said so. */
+    flush_output();
+    if (!g_outputFailed && fclose(stdout) == EOF && errno != EBADF) output_failed(errno);
+    return g_outputFailed ? 1 : status;
 }
