@@ -45,18 +45,29 @@ static const char USAGE[] =
 "Each line of output is: time (UTC, or from the start of a file), pitch in Hz, text.\n";
 
 static volatile sig_atomic_t g_stop = 0;
-static int g_outputFailed = 0;
+static int g_outputEnded = 0, g_outputFailed = 0;
 
 static void on_signal(int s) { (void)s; g_stop = 1; }
+
+/* Call straight after the failed write. */
+static int reader_is_gone(int err)
+{
+#ifdef _WIN32
+    DWORD e = GetLastError();                /* the C library calls a closed pipe EINVAL */
+    if (e == ERROR_NO_DATA || e == ERROR_BROKEN_PIPE) return 1;
+#endif
+    return err == EPIPE;
+}
 
 /* A reader that has gone away, as in `vail-cli | head`, is only a reason to stop. Any other failure is an error. */
 static void output_failed(int err)
 {
-    if (err != EPIPE && !g_outputFailed) {
-        fprintf(stderr, "vail-cli: cannot write the output: %s\n", strerror(err));
-        g_outputFailed = 1;
-    }
     g_stop = 1;
+    if (g_outputEnded) return;
+    g_outputEnded = 1;
+    if (reader_is_gone(err)) return;
+    fprintf(stderr, "vail-cli: cannot write the output: %s\n", strerror(err));
+    g_outputFailed = 1;
 }
 
 static void flush_output(void)
@@ -323,6 +334,6 @@ int main(int argc, char **argv)
     /* Every path ends here, as a closing file can be the first to report a failed write. A stdout that is already closed
      * is only a failure if there was something to write, and flushing has already said so. */
     flush_output();
-    if (!g_outputFailed && fclose(stdout) == EOF && errno != EBADF) output_failed(errno);
+    if (!g_outputEnded && fclose(stdout) == EOF && errno != EBADF) output_failed(errno);
     return g_outputFailed ? 1 : status;
 }
