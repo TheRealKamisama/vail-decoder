@@ -150,9 +150,11 @@ is in [docs/libmorsedec-comparison.md](docs/libmorsedec-comparison.md).
 
 ## Known limits
 
-- **Close stations.** Stations of similar strength copy cleanly down to about 60 Hz apart, and a station 15 dB below
-  its neighbour down to about 80 Hz. A station 15 dB down at 60 Hz is usually found only when its neighbour stops, and
-  at 40 Hz the second station loses about one letter in ten. See [docs/close-signals.md](docs/close-signals.md).
+- **Close stations.** With one neighbour, stations of similar strength copy cleanly down to about 60 Hz apart, and a
+  station 15 dB below its neighbour down to about 80 Hz. A station 15 dB down at 60 Hz is usually found only when its
+  neighbour stops, and at 40 Hz the second station loses about one letter in ten. A station 8 dB or more below
+  neighbours on both sides, within about 120 Hz, loses most of its text. See
+  [docs/close-signals.md](docs/close-signals.md).
 - **Band.** One engine searches for signals from about 280 to 1120 Hz. A host that wants a wider band can run one
   engine per slice of the spectrum, as `cli/src/band.c` does.
 

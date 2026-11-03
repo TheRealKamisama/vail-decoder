@@ -162,7 +162,10 @@ lost and the estimate is not biased. A lower value also starts to cost weak sign
 | level pair at 60–100 Hz | 0/0 | 0/0 | **0/0** | 0/0 | 0/0 |
 | −15 dB pair at 80 / 100 Hz | 0/1, 0/0 | 0/1, 0/0 | **0/3, 0/1** | 0/3, 0/2 | 0/4, 0/3 |
 
-The clamp to `lo`..`hi` still applies, so if the band's noise really rises or falls, the held value follows it.
+The clamp to `lo`..`hi` still applies, so noise that falls, or rises on both sides, moves the estimate. Noise that rises
+on one side only does not lift `lo`, and the rejection then stops the estimate re-training. That makes no difference up
+to 25 dB over the floor, but at 30 dB it costs 1.5–2.3 % against 0–0.8 %. See
+[review-close-signals-and-cli.md](review-close-signals-and-cli.md).
 
 **`BCM_TUNE_KEEP_ON_SWITCH`** (`src/bcm.c`) leaves a channel undisturbed when it stops being current. The flush is the
 reference behaviour (`03 §4.10`), but no grid depends on it. Without this switch the first station keeps 2 to 4 % of
@@ -182,6 +185,9 @@ above.
   noiseless audio it started channels in the tail of a station ending, which added an 8-letter ghost to the `four-clean`
   case of `cli/tests/e2e.py`. A real station started at −18 dB from its neighbour and the false ones at −13 to −25 dB,
   so strength does not separate them.
+- **A weak station between two stronger ones.** The figures above are for one neighbour. With neighbours on both sides
+  `lo` rises too, and the fix does not help: 8 to 12 dB below them at 100 to 120 Hz, the station loses 80 to 86 %, about
+  the same as before. From 150 Hz it is clean.
 - **Closer than 60 Hz.** At 40 Hz, level, the second station still loses 11 % (10 dB SNR).
 - **A very weak station beside a very strong one.** 25 dB down at 80 to 100 Hz, and at −10 dB SNR, the weak station is
   not copied (84 % and 79 %, unchanged by the fix).

@@ -98,8 +98,9 @@ ten at once, the slice overlaps, a receiver's filter, clipping, long messages, a
 
 ## Known limits
 
-- Stations of similar strength are separated down to about 60 Hz apart, and a station 15 dB below its neighbour
-  down to about 80 Hz. Closer than that, expect lost text. See [docs/close-signals.md](../docs/close-signals.md).
+- With one neighbour, stations of similar strength are separated down to about 60 Hz apart, and a station 15 dB below
+  its neighbour down to about 80 Hz. Closer than that, or well below stations on both sides within about 120 Hz, expect
+  lost text. See [docs/close-signals.md](../docs/close-signals.md).
 - Deep, slow fading costs characters, as it does for the engine on its own.
 - It needs a few seconds of a sender's keying to learn their timing before any text comes out.
 - Audio input only: there is no I/Q input yet, so the bandwidth is what the rig's audio carries, up to 3.9 kHz.
