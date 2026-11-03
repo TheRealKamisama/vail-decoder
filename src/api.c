@@ -209,3 +209,9 @@ int vail_channel_text(const vail_api *h, int idx, char *buf, int cap, int *pitch
     if (pitchHz) *pitchHz = API_PITCH_ORIGIN_HZ + (int)nearbyint(c->bin * API_PITCH_BIN_HZ);
     return msg_render(c->msgA, buf, cap);
 }
+
+long vail_channel_dropped(const vail_api *h, int idx)
+{
+    if (idx < 0 || idx >= h->bcm.nChannels) return 0;
+    return h->bcm.channels[idx]->msgA->dropped;
+}

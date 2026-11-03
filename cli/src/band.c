@@ -39,7 +39,8 @@ typedef struct {
     int seen;
     int len;
     int printed;                            /* characters already printed, spaces not counted */
-    long changed;                           /* frame of the last change to the text */
+    long dropped;                           /* the engine's count when the text was last taken */
+    long changed;                         /* frame of the last change to the text */
     long started;                           /* frame when the unprinted text began */
     char text[TEXT_CAP];
 } track;
@@ -128,26 +129,15 @@ static void print_all(band *b, track *t)
     while (t->printed < count_chars(t->text, t->len)) print_line(b, t);
 }
 
-/* A full message drops its oldest characters. Returns how many bytes went from the front; the comparison
- * is made there because revisions only ever touch the tail. */
-static int dropped_bytes(const char *old, int oldLen, const char *cur, int curLen)
+/* dropped: the characters the engine has shifted out of the front of this channel's text so far. */
+static void track_update(band *b, track *t, const char *text, int len, long dropped)
 {
-    enum { PROBE = 32, NEARLY_FULL = MSG_CAPACITY - WRD_WINDOW_MAX };
-    int k;
-    if (oldLen < NEARLY_FULL || curLen < PROBE || !memcmp(old, cur, PROBE)) return 0;
-    for (k = 1; k + PROBE <= oldLen; k++)
-        if (!memcmp(old + k, cur, PROBE)) return k;
-    return 0;
-}
-
-static void track_update(band *b, track *t, const char *text, int len)
-{
-    int gone;
-    if (len == t->len && !memcmp(text, t->text, (size_t)len)) return;
-    gone = dropped_bytes(t->text, t->len, text, len);
-    t->printed -= count_chars(t->text, gone);
+    int gone = (int)(dropped - t->dropped);
+    if (!gone && len == t->len && !memcmp(text, t->text, (size_t)len)) return;
+    t->dropped = dropped;
+    t->printed -= gone;
     if (t->printed < 0) t->printed = 0;
-    if (t->printed >= count_chars(t->text + gone, t->len - gone)) t->started = b->frame;   /* new text */
+    if (t->printed >= count_chars(t->text, t->len) - gone) t->started = b->frame;   /* new text */
     memcpy(t->text, text, (size_t)len + 1);
     t->len = len;
     t->changed = b->frame;
@@ -202,10 +192,13 @@ static void poll_channels(band *b)
             b->nChannels++;
             if (len <= 0) continue;                    /* still learning the sender's timing */
             t = find_track(b, id);
-            if (!t) t = new_track(b, id, e, bin);
+            if (!t) {
+                t = new_track(b, id, e, bin);
+                t->dropped = vail_channel_dropped(b->engine[e], i);
+            }
             t->bin = bin;
             t->seen = 1;
-            track_update(b, t, text, len);
+            track_update(b, t, text, len, vail_channel_dropped(b->engine[e], i));
         }
     }
 }

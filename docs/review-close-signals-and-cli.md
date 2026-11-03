@@ -1,7 +1,7 @@
 # Review: the close-signals fix and vail-cli
 
-A brief review from 2026-11-03, not a deep one. **Nothing listed here has been fixed.** What to improve is still to be
-decided.
+A brief review from 2026-11-03, not a deep one. **Item 1 of vail-cli has since been fixed; nothing else listed here has.**
+What to improve is still to be decided.
 
 CER figures are per cent. "Against" is the same audio with `-DLIK_TUNE_OWN_NOISE=0 -DBCM_TUNE_KEEP_ON_SWITCH=0`.
 
@@ -45,9 +45,11 @@ files. These findings are about `cli/` as it is on main, and none comes from the
 
 Reproduced:
 
-1. **Periodic text is silently lost.** 400 × `VVV` at 40 WPM: 1200 letters sent, 480 printed, exit 0. 300 × `TEST`: 456 of
-   1200. Unique text of 980 letters prints whole, which is what the `long-text` test uses. `dropped_bytes` in
-   `cli/src/band.c` infers the message buffer's shift from its bytes, and periodic text defeats that.
+1. **Fixed: periodic text was silently lost.** 400 × `VVV` at 40 WPM: 1200 letters sent, 480 printed, exit 0. 300 × `TEST`:
+   456 of 1200. A beacon repeated 20 times: 472 of 540. Unique text of 980 letters printed whole, which is all the
+   `long-text` test used. `cli/src/band.c` inferred the message buffer's shift from its bytes, and periodic text defeats
+   that. It now gets the shift from the engine with `vail_channel_dropped`, all of these print whole, and the
+   `repeating-text` test guards it.
 2. **Write errors are reported as success.** `vail-cli a.wav > /dev/full` exits 0 with nothing on stderr. `main.c` treats
    any `fflush` failure as nobody reading, while the man page and README promise exit 1.
 3. **`-b` can print a harmonic as a station.** A clipped 700 Hz station with `-b 1800-2300` prints its text at 2102 Hz. No
@@ -68,8 +70,13 @@ From reading the code only:
 9. Lines printed during the end-of-input drain are stamped up to 4 s early.
 10. `make test BUILD=dir` still tests `cli/build/vail-cli`, which can be a stale binary.
 
+Found while fixing item 1, and a separate problem:
+
+11. The engine misreads a long run of `E`. 100 × `E` at 40 WPM and 15 dB prints 55 characters starting `SH555H55H`, and
+    300 × `E` prints 169, well short of the 500 where the message starts dropping text.
+
 ## Where I would start
 
-Item 1 of vail-cli, because it loses text with no sign of it, then item 2. On the engine, a weak station between two
+Item 2 of vail-cli, because it reports success after losing output. On the engine, a weak station between two
 stronger ones is the largest remaining gap on a busy band. The reviewer's suggestion there, untested, is a side reference
 that a neighbour's lobe cannot lift, such as a median per side.

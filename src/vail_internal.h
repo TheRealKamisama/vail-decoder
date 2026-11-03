@@ -497,6 +497,7 @@ void wrd_process_chars(Wrd *w, Char *chars, int n, int last);
 typedef struct {
     Char chars[MSG_CAPACITY];
     int count;
+    long dropped;            /* characters shifted out of the front so far, for hosts that follow the text */
     Char replaced[MSG_CAPACITY]; int replacedCount;
     int veq;                 /* confirmed-identical prefix of the last merge (08 §4.1 step 2) */
     Char newTail[MSG_CAPACITY];  int newTailCount;

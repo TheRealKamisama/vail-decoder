@@ -59,6 +59,10 @@ void API_ModeSet(vail_api *h, int v);
 int vail_current_text(const vail_api *h, char *buf, int cap);
 int vail_channel_count_all(const vail_api *h);
 int vail_channel_text(const vail_api *h, int idx, char *buf, int cap, int *pitchHz, int *id);
+/* How many characters that channel's text has dropped from its front so far, as a full message does. A host that
+ * follows the text moves its position back by the increase; repeating text makes this impossible to tell from the
+ * text itself. */
+long vail_channel_dropped(const vail_api *h, int idx);
 
 #ifdef __cplusplus
 }

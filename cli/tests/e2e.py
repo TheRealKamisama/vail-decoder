@@ -268,6 +268,22 @@ def check_long_text_is_whole():
     return []
 
 
+def check_repeating_text_is_whole():
+    """The same when the text repeats, as a beacon's does, so that old and new text look alike."""
+    problems = []
+    for words, times in (("VVV", 250), ("TEST", 160), ("CQ CQ CQ DE K1ABC K1ABC K1ABC PSE K", 20)):
+        text = " ".join([words] * times)
+        with tempfile.TemporaryDirectory() as tmp:
+            st = make_stations(tmp, [{"hz": 700, "wpm": 40, "text": text}])
+            rc, lines, err = decode(mix(tmp, "repeat", st, 15))
+        cers, ghost_chars, ghosts, texts = score(lines, st)
+        printed = sum(len(letters(l[2])) for l in lines)
+        if rc or cers[700] > 0.02 or ghost_chars or printed != len(letters(text)):
+            problems.append("%s x %d: %d of %d letters printed, CER %.1f%%, %d ghost characters, exit %d" %
+                            (words, times, printed, len(letters(text)), 100 * cers[700], ghost_chars, rc))
+    return problems
+
+
 def check_overs():
     """Two stations take turns on one frequency: both are heard, in order, whether the channel survives
     the gap between them or not."""
@@ -349,7 +365,7 @@ def check_errors():
     return problems
 
 
-CHECKS = {"long-text": check_long_text_is_whole, "overs": check_overs, "carrier": check_carrier, "formats": check_formats,
+CHECKS = {"long-text": check_long_text_is_whole, "repeating-text": check_repeating_text_is_whole, "overs": check_overs, "carrier": check_carrier, "formats": check_formats,
           "band-option": check_band_option, "errors": check_errors}
 
 

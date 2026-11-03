@@ -177,15 +177,20 @@ static void test_msg(void)
     memset(&c, 0, sizeof c);
     for (i = 0; i < 500; i++) { c.charCode = 'A' + i % 26; c.elementOrdinal = i; msg_merge_chars(m, &c, 1); }
     CHECK(m->count == 500, "count %d want 500", m->count);
+    CHECK(m->dropped == 0, "dropped %ld before any overflow", m->dropped);
     c.elementOrdinal = 1000; msg_merge_chars(m, &c, 1);
     CHECK(m->count == 376, "after overflow count %d want 376", m->count);
     CHECK(m->chars[0].elementOrdinal == 125, "oldest 125 dropped (first ordinal %d)", m->chars[0].elementOrdinal);
+    CHECK(m->dropped == 125, "dropped %ld after one overflow, want 125", m->dropped);
     /* a re-sent identical tail is kept once */
     {
         int before = m->count;
         msg_merge_chars(m, &c, 1);
         CHECK(m->count == before && m->newTailCount == 0, "duplicate ordinal appended twice");
     }
+    /* the count keeps adding up over later overflows, and a duplicate does not move it */
+    for (i = 1001; m->dropped == 125; i++) { c.elementOrdinal = i; msg_merge_chars(m, &c, 1); }
+    CHECK(m->dropped == 250 && m->count == 376, "second overflow: dropped %ld count %d", m->dropped, m->count);
     free(m);
 }
 

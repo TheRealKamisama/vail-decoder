@@ -103,7 +103,8 @@ vail_fe_free(fe);
 
 There are also queries for state, pitch, SNR, WPM and channel count (`API_State`, `API_Pitch`,
 `API_Snr`, `API_Wpm`, `API_ChannelCount`). `API_PitchLock(h, hz)` locks the pitch. Full text is
-available with `vail_current_text` and `vail_channel_text`. See `src/vail.h`.
+available with `vail_current_text` and `vail_channel_text`, and `vail_channel_dropped` says how
+much of a channel's text a full message has dropped from its front. See `src/vail.h`.
 
 ## Architecture
 

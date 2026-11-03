@@ -33,6 +33,7 @@ void msg_merge_chars(Msg *m, const Char *batch, int n)     /* 08 §4.1 */
     m->count -= overlap - veq;
     if (m->count + m->newTailCount > MSG_CAPACITY) {
         m->count -= MSG_SHIFT;
+        m->dropped += MSG_SHIFT;
         memmove(m->chars, m->chars + MSG_SHIFT, (size_t)m->count * sizeof(Char));
     }
     if (m->newTailCount == 0) {
