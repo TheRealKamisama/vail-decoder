@@ -14,13 +14,16 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-22.04, platform: linux-x86_64 }   # the oldest runner, so the binary runs on older systems
-          - { os: macos-latest, platform: macos-arm64 }
-          - { os: macos-15-intel, platform: macos-x86_64 }
+          # the oldest runner, so the binary runs on older systems; ncurses goes inside it, as libraries' names differ between them
+          - { os: ubuntu-22.04, platform: linux-x86_64, ncurses: 'NCURSES=1 CURSES_LIBS="-l:libncursesw.a -l:libtinfo.a"' }
+          - { os: macos-latest, platform: macos-arm64, ncurses: NCURSES=1 }
+          - { os: macos-15-intel, platform: macos-x86_64, ncurses: NCURSES=1 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: make CFLAGS=-O2 test
+      - if: runner.os == 'Linux'
+        run: sudo apt-get install -y libncurses-dev
+      - run: make CFLAGS=-O2 ${{ matrix.ncurses }} test
         working-directory: cli
       - run: cli/package.sh ${{ matrix.platform }} "$GITHUB_REF_NAME"
       - uses: actions/upload-artifact@v4
@@ -38,8 +41,8 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          install: make zip mingw-w64-x86_64-gcc mingw-w64-x86_64-python
-      - run: make CFLAGS=-O2 test
+          install: make zip mingw-w64-x86_64-gcc mingw-w64-x86_64-python mingw-w64-x86_64-ncurses
+      - run: make CFLAGS=-O2 NCURSES=1 test
         working-directory: cli
       - run: sh cli/package.sh windows-x86_64 "$GITHUB_REF_NAME"
       - uses: actions/upload-artifact@v4

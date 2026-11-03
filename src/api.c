@@ -117,14 +117,29 @@ int API_Feed(vail_api *h, float *s)                        /* 09 §2.3 */
     return API_State(h);
 }
 
+static int channel_state(const Channel *c)
+{
+    int decoding = bcm_is_decoding(c);
+    if (c->pinnedFlag) return decoding ? API_STATE_LOCKED_DECODING : API_STATE_LOCKED_PAUSE;
+    return decoding ? API_STATE_DECODING : API_STATE_PAUSE;
+}
+
+static int channel_snr(const Channel *c)
+{
+    double x = c->pipeline->env.envMeanSquare;
+    if (x < 1.0) x = 1.0;
+    return (int)nearbyint(10.0 * log10(x)) - 10;
+}
+
+static int channel_wpm(const Channel *c)
+{
+    return (int)nearbyint(sta_speed(&c->pipeline->sta));
+}
+
 int API_State(const vail_api *h)                           /* 09 §2.4 */
 {
     const Channel *c = h->bcm.currentChannel;
-    int decoding;
-    if (!c) return API_STATE_NONE;
-    decoding = bcm_is_decoding(c);
-    if (c->pinnedFlag) return decoding ? API_STATE_LOCKED_DECODING : API_STATE_LOCKED_PAUSE;
-    return decoding ? API_STATE_DECODING : API_STATE_PAUSE;
+    return c ? channel_state(c) : API_STATE_NONE;
 }
 
 int API_Pitch(const vail_api *h)
@@ -159,18 +174,13 @@ void API_PitchLock(vail_api *h, int hz)                    /* 09 §2.6 */
 int API_Snr(const vail_api *h)                             /* 09 §2.7 */
 {
     const Channel *c = h->bcm.currentChannel;
-    double x;
-    if (!c) return API_NOT_AVAILABLE;
-    x = c->pipeline->env.envMeanSquare;
-    if (x < 1.0) x = 1.0;
-    return (int)nearbyint(10.0 * log10(x)) - 10;
+    return c ? channel_snr(c) : API_NOT_AVAILABLE;
 }
 
 int API_Wpm(const vail_api *h)                             /* 09 §2.8 */
 {
     const Channel *c = h->bcm.currentChannel;
-    if (!c) return API_NOT_AVAILABLE;
-    return (int)nearbyint(sta_speed(&c->pipeline->sta));
+    return c ? channel_wpm(c) : API_NOT_AVAILABLE;
 }
 
 int API_ChannelCount(const vail_api *h)                    /* 09 §2.9 */
@@ -216,4 +226,15 @@ long vail_channel_dropped(const vail_api *h, int idx)
 {
     if (idx < 0 || idx >= h->bcm.nChannels) return 0;
     return h->bcm.channels[idx]->msgA->dropped;
+}
+
+int vail_channel_stats(const vail_api *h, int idx, int *snrDb, int *wpm, int *state)
+{
+    const Channel *c;
+    if (idx < 0 || idx >= h->bcm.nChannels) return 0;
+    c = h->bcm.channels[idx];
+    if (snrDb) *snrDb = channel_snr(c);
+    if (wpm) *wpm = channel_wpm(c);
+    if (state) *state = channel_state(c);
+    return 1;
 }

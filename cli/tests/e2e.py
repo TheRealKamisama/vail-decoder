@@ -12,15 +12,33 @@ is a ghost. CER is the edit distance over the length of what the station sent, w
 """
 import array
 import argparse
+import json
 import math
 import os
 import random
 import re
+import select
+import signal
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import wave
+import warnings
 from concurrent.futures import ThreadPoolExecutor
+
+try:
+    import fcntl
+    import pty
+    import termios
+    TERMINAL = True
+except ImportError:                   # not on Windows, whose console cannot be driven from a test like this
+    TERMINAL = False
+
+# The terminal tests fork with a feeding thread alive; the child only calls exec.
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*fork.*")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI = os.environ.get("VAIL_CLI", os.path.join(ROOT, "build", "vail-cli"))
@@ -145,7 +163,7 @@ def edit_distance(a, b):
 
 def letters(s):
     """What is scored: word spacing is a judgement call of the decoder, the letters are not."""
-    return "".join(s.split())
+    return "".join(s.replace("<", "").replace(">", "").split())
 
 
 def score(lines, stations):
@@ -402,7 +420,7 @@ def check_write_errors():
 def check_version():
     """--version gives both versions, and they match the man page and the engine's header."""
     r = subprocess.run([CLI, "--version"], capture_output=True, text=True)
-    m = re.fullmatch(r"vail-cli (\d+\.\d+\.\d+) \(vail engine (\d+\.\d+\.\d+)\)\n", r.stdout)
+    m = re.fullmatch(r"vail-cli (\d+\.\d+\.\d+) \(vail engine (\d+\.\d+\.\d+)\)\nfull-screen view: (yes|no, .*)\n", r.stdout)
     if r.returncode or not m:
         return ["--version: exit %d, %r" % (r.returncode, r.stdout)]
     problems = []
@@ -415,8 +433,551 @@ def check_version():
     return problems
 
 
+def view_is_built():
+    return "full-screen view: yes" in subprocess.run([CLI, "--version"], capture_output=True, text=True).stdout
+
+
+def speech_like(seconds, f0=120.0, seed=1):
+    """A voice as a sound card hears it: harmonics through moving formants, in syllables with pauses. Not a real voice."""
+    n = int(seconds * RATE)
+    rng = random.Random(seed)
+    out = [0.0] * n
+    phase = 0.0
+    block = 80
+    amps = []
+    for i in range(n):
+        t = i / RATE
+        pitch = f0 * (1 + 0.15 * math.sin(2 * math.pi * 0.7 * t) + 0.05 * math.sin(2 * math.pi * 3.1 * t))
+        phase += 2 * math.pi * pitch / RATE
+        if i % block == 0:
+            f1 = 600 + 250 * math.sin(2 * math.pi * 2.3 * t)
+            f2 = 1500 + 500 * math.sin(2 * math.pi * 1.7 * t)
+            f3 = 2600 + 300 * math.sin(2 * math.pi * 1.1 * t)
+            amps = [sum(math.exp(-((k * pitch - f) / b) ** 2) for f, b in ((f1, 120), (f2, 180), (f3, 250))) / k ** 0.5
+                    for k in range(1, 26)]
+            on = (math.sin(2 * math.pi * 3.5 * t + 2 * math.sin(2 * math.pi * 0.4 * t)) > -0.2
+                  and math.sin(2 * math.pi * 0.17 * t + 1) > -0.6)
+        if on:
+            out[i] = sum(a * math.sin((k + 1) * phase) for k, a in enumerate(amps) if a > 0.01)
+    peak = max(1e-9, max(abs(x) for x in out))
+    return [clamp(14000 * x / peak + rng.gauss(0, 150)) for x in out]
+
+
+def check_not_morse_is_hidden():
+    """Speech decodes as piles of E and T. It is left out and said to be, and --all still shows it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "speech.wav")
+        write_wav(path, speech_like(40))
+        rc, shown, err = decode(path)
+        rc2, everything, err2 = decode(path, "--all")
+    count = lambda lines: sum(len(letters(l[2])) for l in lines)
+    problems = []
+    if rc or rc2:
+        problems.append("exit %d and %d" % (rc, rc2))
+    if count(everything) < 100:
+        problems.append("--all printed only %d letters: nothing to test" % count(everything))
+    if count(shown) > 0.15 * count(everything):
+        problems.append("%d of %d letters shown: %r" % (count(shown), count(everything), shown[:5]))
+    if "--all" not in err:
+        problems.append("nothing says text was left out: %r" % err)
+    if "--all" in err2:
+        problems.append("--all still says text was left out: %r" % err2)
+    return problems
+
+
+def check_real_text_is_not_hidden():
+    """What looks least like language, or is mostly the letters speech decodes to, still prints if it is real."""
+    problems = []
+    for text in ("XQZ7 JW4K 8ZR2 PV9D QT3F HX6B LK2M WC5Y 0GN1 UI7S",              # code groups
+                 "1 1 1 11 111 0 0 0 00 000",                                       # digits alone
+                 "5NN TU", "73", "R 73", "CQ",                                      # short overs
+                 " ".join(["TEST"] * 8),                                            # nearly all E and T
+                 "TEN NET ANT TAN NET TEN"):
+        with tempfile.TemporaryDirectory() as tmp:
+            st = make_stations(tmp, [{"hz": 1100, "wpm": 22, "text": text}])
+            rc, lines, err = decode(mix(tmp, "real", st, 15))
+        cer = edit_distance(letters(" ".join(l[2] for l in lines)), letters(text)) / len(letters(text))
+        if rc or cer > 0.10:
+            problems.append("%r: CER %.0f%%, exit %d: %r" % (text, 100 * cer, rc, lines))
+    return problems
+
+
+def check_lines_read_well():
+    """One space between words, and prosigns as <SK>, so they cannot be taken for letters in a word."""
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, [{"hz": 900, "wpm": 18, "text": QSO[0], "gen": ("-j", "0.15", "-W", "3.5", "-G", "1.8")}])
+        rc, lines, err = decode(mix(tmp, "words", st, 12))
+        rc2, raw, err2 = decode(mix(tmp, "words", st, 12), "--all")
+    for hz_time, hz, text in lines + raw:
+        if "  " in text or text != text.strip():
+            problems.append("spacing: %r" % text)
+        if re.search(r"[a-z]", text):
+            problems.append("lower case: %r" % text)
+    return problems or ([] if lines else ["no text"])
+
+
+def check_one_line_per_signal():
+    """A signal in the overlap of two slices is heard by two engines, and prints once."""
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, [{"hz": 1700, "wpm": 22, "text": "CQ CQ DE K1ABC K1ABC PSE K"}])
+        rc, lines, err = decode(mix(tmp, "twin", st, 25))
+    heard = letters(" ".join(l[2] for l in lines))
+    if rc or heard.count("K1ABCK1ABC") != 1:
+        return ["exit %d: %r" % (rc, lines)]
+    return []
+
+
+def check_json():
+    """JSON Lines carry the same text as the lines, and what only they have room for."""
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, FOUR[:2])
+        path = mix(tmp, "json", st, 15)
+        rc, lines, err = decode(path)
+        r = subprocess.run([CLI, "--json", path], capture_output=True, text=True)
+    problems = []
+    if r.returncode:
+        problems.append("exit %d: %s" % (r.returncode, r.stderr))
+    try:
+        rows = [json.loads(l) for l in r.stdout.splitlines()]
+    except ValueError as e:
+        return ["not JSON (%s): %r" % (e, r.stdout[:200])]
+    if [x["text"] for x in rows] != [l[2] for l in lines] or [x["frequency"] for x in rows] != [l[1] for l in lines]:
+        problems.append("differs from the lines: %r" % rows[:2])
+    for x in rows:
+        if not (isinstance(x["time"], float) and isinstance(x["channel"], int) and 5 <= x["wpm"] <= 80 and "snr" in x):
+            problems.append("fields: %r" % x)
+        if "utc" in x:
+            problems.append("a file has no time of day: %r" % x)
+    return problems or ([] if rows else ["no rows"])
+
+
+def check_seconds():
+    """--seconds stops after that much audio, however long the file is."""
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, [{"hz": 700, "wpm": 25, "text": " ".join(QSO)}])
+        path = mix(tmp, "long", st, 15)
+        rec = os.path.join(tmp, "rec.wav")
+        r = subprocess.run([CLI, "-s", "10", "-r", rec, path], capture_output=True, text=True)
+        seconds = len(read_wav(rec)) / RATE
+    if r.returncode or not 9.9 < seconds < 10.1:
+        return ["exit %d, %.2f s recorded" % (r.returncode, seconds)]
+    return []
+
+
+def stereo(left, right):
+    n = max(len(left), len(right))
+    left, right = list(left) + [0] * (n - len(left)), list(right) + [0] * (n - len(right))
+    return [x for pair in zip(left, right) for x in pair]
+
+
+def check_channel():
+    """--channel picks one side of a stereo file or stream, and the two sides mix by default."""
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        a = make_stations(tmp, [{"hz": 700, "text": QSO[0]}])
+        b = make_stations(tmp, [{"hz": 1500, "text": QSO[6]}])
+        left, right = read_wav(mix(tmp, "l", a, 20)), read_wav(mix(tmp, "r", b, 20))
+        path = os.path.join(tmp, "stereo.wav")
+        samples = stereo(left, right)
+        write_wav(path, samples, channels=2)
+        raw = array.array("h", samples).tobytes()
+
+        def pitches(lines):
+            return {700 if abs(l[1] - 700) <= MATCH_HZ else 1500 if abs(l[1] - 1500) <= MATCH_HZ else l[1] for l in lines}
+
+        for args, want in ((["-c", "1"], {700}), (["-c", "2"], {1500}), ([], {700, 1500})):
+            rc, lines, err = decode(path, *args)
+            if rc or pitches(lines) != want:
+                problems.append("file %s: exit %d, heard %r" % (args, rc, pitches(lines)))
+        r = subprocess.run([CLI, "-n", "2", "-c", "2", "-"], input=raw, capture_output=True)
+        if r.returncode or b"PSE" in r.stdout or b"G3XYZ" not in r.stdout:
+            problems.append("stream -c 2: exit %d: %r" % (r.returncode, r.stdout))
+        r = subprocess.run([CLI, "-c", "3", path], capture_output=True, text=True)
+        if r.returncode != 1 or "no channel 3" not in r.stderr:
+            problems.append("-c 3 of 2: exit %d: %r" % (r.returncode, r.stderr))
+    return problems
+
+
+def check_raw_stream():
+    """Raw samples at other rates and in other formats decode like the original."""
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, [{"hz": 1500, "text": QSO[0]}])
+        base = read_wav(mix(tmp, "base", st, 15))
+    def upsampled(factor):
+        out = []
+        for i in range(len(base) - 1):
+            for k in range(factor):
+                out.append(base[i] + (base[i + 1] - base[i]) * k / factor)
+        return out
+    cases = {
+        "48 kHz s16": (["-R", "48000"], array.array("h", [int(x) for x in upsampled(6)]).tobytes()),
+        "48 kHz f32 stereo": (["--rate=48000", "--format=f32", "--channels=2"],
+                              array.array("f", [v for x in upsampled(6) for v in (x / 32768, x / 32768)]).tobytes()),
+        "8 kHz f32": (["-F", "f32"], array.array("f", [x / 32768 for x in base]).tobytes()),
+        "cut short": ([], base.tobytes() + b"\x01"),
+    }
+    for name, (args, data) in cases.items():
+        r = subprocess.run([CLI, *args, "-"], input=data, capture_output=True)
+        if r.returncode or b"K1ABC K1ABC" not in r.stdout:
+            problems.append("%s: exit %d: %r %r" % (name, r.returncode, r.stdout, r.stderr))
+    return problems
+
+
+def check_option_forms():
+    """The usual ways of writing options, and messages that help when they are wrong."""
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, FOUR)
+        path = mix(tmp, "four", st, 15)
+        want = decode(path, "-b", "1000-2000")[1]
+        for args in (["--band", "1000-2000"], ["--band=1000-2000"], ["-b1000-2000"]):
+            got = decode(path, *args)[1]
+            if got != want or not got:
+                problems.append("%s gave %r" % (args, got))
+        got = decode(path, "-ab", "1000-2000")[1]
+        if not got:
+            problems.append("-ab 1000-2000 gave nothing")
+    for args, wants in ((["--jsn"], "--json"), (["--devcie", "x"], "--device"), (["--bnad=1-2"], "--band"),
+                        (["--plain=yes"], "no value"), (["-T", "-p"], "both"), (["-z"], "-z"),
+                        (["-R", "48000", "x.wav"], "FILE of -"), (["-R", "48000"], "FILE of -"), (["-F", "s8", "-"], "s16 or f32"),
+                        (["-R", "10", "-"], "sample rate"), (["-s", "0"], "seconds"), (["-c", "0"], "channel"),
+                        (["-n", "1", "-c", "2", "-"], "--channels")):
+        r = subprocess.run([CLI, *args], capture_output=True, text=True, input="")
+        if r.returncode != 2 or wants not in r.stderr or r.stdout:
+            problems.append("%s: exit %d, stdout %r, stderr %r" % (args, r.returncode, r.stdout, r.stderr))
+    return problems
+
+
+def check_documented():
+    """Every option is in the help, the man page and the README, and they list no others."""
+    r = subprocess.run([CLI, "--help"], capture_output=True, text=True)
+    named = set(re.findall(r"^\s+-\w, (--[a-z]+)", r.stdout, re.M))
+    problems = [] if len(named) >= 15 else ["--help names only %r" % sorted(named)]
+    for name in ("vail-cli.1", "README.md"):
+        with open(os.path.join(ROOT, name)) as f:
+            text = f.read().replace("\\-", "-")
+        missing = [o for o in sorted(named) if o not in text]
+        if missing:
+            problems.append("%s does not mention %s" % (name, ", ".join(missing)))
+    return problems
+
+
+def wait_for(proc, seconds):
+    try:
+        proc.wait(seconds)
+        return True
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return False
+
+
+def check_signals_on_idle_stream():
+    """Ctrl+C or SIGTERM ends a run whose stream has gone quiet, says what was heard, and finishes a recording."""
+    if os.name == "nt":
+        return []
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, [{"hz": 800, "text": QSO[0]}])
+        data = read_wav(mix(tmp, "idle", st, 15)).tobytes()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            rec = os.path.join(tmp, "rec%d.wav" % sig)
+            p = subprocess.Popen([CLI, "-r", rec, "-"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            p.stdin.write(data)
+            p.stdin.flush()
+            time.sleep(1.5)                  # the stream stays open, with nothing more on it
+            p.send_signal(sig)
+            if not wait_for(p, 10):
+                problems.append("signal %d did not end the run" % sig)
+                continue
+            out = p.stdout.read().decode()
+            p.stdin.close(), p.stdout.close(), p.stderr.close()
+            if p.returncode or "K1ABC" not in out:
+                problems.append("signal %d: exit %d: %r" % (sig, p.returncode, out))
+            if len(read_wav(rec)) * 2 < len(data) - 2 * 85:
+                problems.append("signal %d: the recording is short: %d of %d" % (sig, len(read_wav(rec)) * 2, len(data)))
+    return problems
+
+
+# ------------------------------------------------------------------- on a terminal (not Windows)
+
+def strip_codes(data):
+    return re.sub(r"\x1b(\[[0-9;?]*[ -/]*[@-~]|\([0-9A-Z]|[=>78])|\x0f|\x0e", "", data.decode("latin-1"))
+
+
+class Terminal:
+    """A program on a pseudo-terminal that is its controlling terminal, with stdin and stdout optionally elsewhere."""
+
+    def __init__(self, args, stdin=None, stdout=None, term="xterm", env=None, cols=100, rows=30):
+        self.data = b""
+        self.pid, self.fd = pty.fork()
+        if self.pid == 0:
+            try:
+                fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                if stdin is not None:
+                    os.dup2(stdin, 0)
+                if stdout is not None:
+                    os.dup2(stdout, 1)
+                environment = dict(os.environ, TERM=term, **(env or {}))
+                os.execve(CLI, [CLI, *args], environment)
+            finally:
+                os._exit(127)
+        self.before = None
+
+    def attributes(self):
+        return termios.tcgetattr(self.fd)
+
+    def pump(self, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            ready, _, _ = select.select([self.fd], [], [], 0.05)
+            if ready:
+                try:
+                    chunk = os.read(self.fd, 65536)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                self.data += chunk
+
+    def wait_for_text(self, text, seconds=30):
+        end = time.time() + seconds
+        while time.time() < end:
+            self.pump(0.1)
+            if text in strip_codes(self.data):
+                return True
+        return False
+
+    def send(self, keys):
+        os.write(self.fd, keys.encode())
+
+    def finish(self, seconds=15):
+        """Returns the exit status, or None if it had to be killed."""
+        end = time.time() + seconds
+        while time.time() < end:
+            self.pump(0.05)
+            pid, status = os.waitpid(self.pid, os.WNOHANG)
+            if pid:
+                self.pump(0.1)
+                return os.waitstatus_to_exitcode(status)
+        os.kill(self.pid, signal.SIGKILL)
+        os.waitpid(self.pid, 0)
+        return None
+
+
+def stream_then_hold(tmp, *stations, tail=7):
+    """A pipe carrying a station, and then staying open with nothing on it."""
+    st = make_stations(tmp, list(stations))
+    samples = read_wav(mix(tmp, "term", st, 15, seconds=None))
+    data = samples.tobytes() + b"\0\0" * (tail * RATE)
+    reader, writer = os.pipe()
+    def feed():
+        try:
+            os.write(writer, data)
+        except OSError:
+            pass
+    threading.Thread(target=feed, daemon=True).start()
+    return reader, writer
+
+
+def check_view_on_terminal():
+    """The view opens by itself for a stream on a terminal, answers keys while the stream is idle, leaves the terminal as it
+    found it, and prints the lines it was showing."""
+    if not TERMINAL or not view_is_built():
+        return []
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        reader, writer = stream_then_hold(tmp, {"hz": 800, "text": QSO[0]})
+        t = Terminal(["-"], stdin=reader)
+        os.close(reader)
+        if not t.wait_for_text("SIGNALS"):
+            problems.append("no view: %r" % strip_codes(t.data)[-300:])
+        if not t.wait_for_text("  797  CQ CQ"):
+            problems.append("no line in the log: %r" % strip_codes(t.data)[-300:])
+        t.send("?")
+        if not t.wait_for_text("Press any key"):
+            problems.append("no help")
+        t.send("x")
+        t.pump(0.5)
+        t.send("c")
+        t.pump(0.5)
+        t.send("q")
+        status = t.finish()
+        os.close(writer)
+        text = t.data.decode("latin-1")
+        if status != 0:
+            problems.append("exit %r" % status)
+        if "\x1b[?1049h" not in text or "\x1b[?1049l" not in text:
+            problems.append("the alternate screen was not used and left")
+        else:
+            after = text[text.rindex("\x1b[?1049l"):]
+            if "K1ABC K1ABC" not in strip_codes(after.encode("latin-1")):
+                problems.append("the lines were not printed at the end: %r" % after[-300:])
+            if "\x1b[?25h" not in text[text.rindex("\x1b[?25l"):]:
+                problems.append("the cursor was left hidden")
+    return problems
+
+
+def check_view_restores_terminal():
+    """After the view, the terminal has its old settings: echo and line editing come back."""
+    if not TERMINAL or not view_is_built():
+        return []
+    with tempfile.TemporaryDirectory() as tmp:
+        reader, writer = stream_then_hold(tmp, {"hz": 800, "text": "CQ"}, tail=0)
+        master, slave = pty.openpty()
+        try:
+            before = termios.tcgetattr(slave)
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    os.setsid()
+                    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+                    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+                    os.dup2(reader, 0)
+                    os.dup2(slave, 1)
+                    os.dup2(slave, 2)
+                    os.execve(CLI, [CLI, "-"], dict(os.environ, TERM="xterm"))
+                finally:
+                    os._exit(127)
+            os.close(reader)
+            seen = b""
+            end = time.time() + 15
+            while b"SIGNALS" not in seen and time.time() < end:
+                if select.select([master], [], [], 0.1)[0]:
+                    seen += os.read(master, 65536)
+            during = termios.tcgetattr(slave)
+            os.write(master, b"q")
+            os.close(writer)
+            end = time.time() + 15
+            status = None
+            while time.time() < end and status is None:
+                if select.select([master], [], [], 0.05)[0]:
+                    try:
+                        os.read(master, 65536)
+                    except OSError:
+                        pass
+                got, st = os.waitpid(pid, os.WNOHANG)
+                if got:
+                    status = os.waitstatus_to_exitcode(st)
+            after = termios.tcgetattr(slave)
+        finally:
+            os.close(master)
+            os.close(slave)
+    problems = []
+    if b"SIGNALS" not in seen:
+        problems.append("no view: %r" % seen[-200:])
+    if during[3] == before[3]:
+        problems.append("the view did not change the terminal's settings, so this test shows nothing")
+    if after[3] != before[3]:
+        problems.append("local modes not restored: %o, was %o" % (after[3], before[3]))
+    if status != 0:
+        problems.append("exit %r" % status)
+    return problems
+
+
+def check_view_beside_a_pipe():
+    """With -T and stdout elsewhere, the view is on the terminal and stdout gets the lines as they finish."""
+    if not TERMINAL or not view_is_built():
+        return []
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        reader, writer = stream_then_hold(tmp, {"hz": 800, "text": QSO[0]})
+        log = os.path.join(tmp, "out.txt")
+        out = os.open(log, os.O_WRONLY | os.O_CREAT)
+        t = Terminal(["-T", "-"], stdin=reader, stdout=out)
+        os.close(reader)
+        os.close(out)
+        if not t.wait_for_text("  797  CQ CQ"):
+            problems.append("no line in the view: %r" % strip_codes(t.data)[-300:])
+        with open(log) as f:
+            written = f.read()
+        if "K1ABC K1ABC" not in written:
+            problems.append("stdout has no line while the view is open: %r" % written)
+        t.send("q")
+        status = t.finish()
+        os.close(writer)
+        with open(log) as f:
+            written = f.read()
+        if status != 0 or written.count("K1ABC K1ABC K1ABC") != 1 or "\x1b" in written:
+            problems.append("exit %r, stdout %r" % (status, written))
+    return problems
+
+
+def check_view_holds_at_the_end():
+    """A file in the view stays on the screen when it has finished, until it is closed."""
+    if not TERMINAL or not view_is_built():
+        return []
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, [{"hz": 800, "text": QSO[0]}])
+        t = Terminal(["-T", mix(tmp, "f", st, 15)])
+        if not t.wait_for_text("finished"):
+            problems.append("does not say it has finished: %r" % strip_codes(t.data)[-300:])
+        if "waiting for audio" in strip_codes(t.data):
+            problems.append("a file has no input level to wait for")
+        t.pump(1)
+        if os.waitpid(t.pid, os.WNOHANG)[0]:
+            return problems + ["it did not wait"]
+        t.send("q")
+        status = t.finish()
+        if status != 0:
+            problems.append("exit %r" % status)
+    return problems
+
+
+def check_no_view_on_terminal():
+    """Where there can be no view, a terminal still works: lines, and -T says why it cannot."""
+    if not TERMINAL:
+        return []
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        st = make_stations(tmp, [{"hz": 800, "text": QSO[0]}])
+        path = mix(tmp, "f", st, 15)
+        # A file on a terminal is lines, unless asked otherwise.
+        t = Terminal([path])
+        status = t.finish(30)
+        text = t.data.decode("latin-1")
+        if status != 0 or "K1ABC K1ABC" not in text or "\x1b" in text:
+            problems.append("a file: exit %r: %r" % (status, text[-200:]))
+        # So is a stream with --plain, or on a terminal that cannot show the view.
+        for args, term in ((["--plain", "-"], "xterm"), (["-"], "dumb")):
+            reader, writer = stream_then_hold(tmp, {"hz": 800, "text": QSO[0]})
+            t = Terminal(args, stdin=reader, term=term)
+            os.close(reader)
+            os.close(writer)
+            status = t.finish(30)
+            text = t.data.decode("latin-1")
+            if status != 0 or "K1ABC K1ABC" not in text or "\x1b" in text:
+                problems.append("%s on %s: exit %r: %r" % (args, term, status, text[-200:]))
+        # --view needs a terminal, or a build with one.
+        p = subprocess.run([CLI, "-T", path], capture_output=True, text=True, start_new_session=True)
+        if p.returncode != 1 or "cannot open the full-screen view" not in p.stderr or p.stdout:
+            problems.append("-T with no terminal: exit %d: %r" % (p.returncode, p.stderr))
+        t = Terminal(["-T", path], term="dumb")
+        status = t.finish(30)
+        if status != 1 or "cannot open the full-screen view" not in t.data.decode("latin-1"):
+            problems.append("-T on a dumb terminal: exit %r: %r" % (status, t.data[-200:]))
+        # A terminal is no source of raw samples.
+        t = Terminal(["-"])
+        status = t.finish(10)
+        if status != 2 or "pipe" not in t.data.decode("latin-1"):
+            problems.append("- from a terminal: exit %r: %r" % (status, t.data[-200:]))
+    return problems
+
+
 CHECKS = {"long-text": check_long_text_is_whole, "repeating-text": check_repeating_text_is_whole, "overs": check_overs, "carrier": check_carrier, "formats": check_formats,
-          "band-option": check_band_option, "errors": check_errors, "write-errors": check_write_errors, "version": check_version}
+          "band-option": check_band_option, "errors": check_errors, "write-errors": check_write_errors, "version": check_version,
+          "not-morse": check_not_morse_is_hidden, "real-text": check_real_text_is_not_hidden, "lines-read-well": check_lines_read_well,
+          "one-line-per-signal": check_one_line_per_signal, "json": check_json, "seconds": check_seconds, "channel": check_channel,
+          "raw-stream": check_raw_stream, "option-forms": check_option_forms, "documented": check_documented,
+          "signals-on-idle-stream": check_signals_on_idle_stream}
+
+# These fork, so they run one at a time, after the threads above have finished.
+TERMINAL_CHECKS = {"view-on-terminal": check_view_on_terminal, "view-restores-terminal": check_view_restores_terminal,
+                   "view-beside-a-pipe": check_view_beside_a_pipe, "view-holds-at-the-end": check_view_holds_at_the_end,
+                   "no-view-on-terminal": check_no_view_on_terminal}
 
 
 def main():
@@ -441,7 +1002,12 @@ def main():
                     print("       %5d Hz  CER %5.1f%%  %s" % (hz, 100 * c, texts[hz]))
                 for t, hz, text in ghosts:
                     print("       ghost %5d Hz  t=%3d  %s" % (hz, t, text))
-    print("%d of %d failed" % (failed, len(names) + len(checks)))
+    terminal = [n for n in TERMINAL_CHECKS if args.filter in n]
+    for n in terminal:
+        problems = TERMINAL_CHECKS[n]()
+        failed += bool(problems)
+        print("%-4s %s%s" % ("FAIL" if problems else "ok", n, ": " + "; ".join(problems) if problems else ""))
+    print("%d of %d failed" % (failed, len(names) + len(checks) + len(terminal)))
     return 1 if failed else 0
 
 

@@ -21,12 +21,25 @@ jobs:
         working-directory: cli
     steps:
       - uses: actions/checkout@v4
-      - run: make
-      - run: make test
+      - if: runner.os == 'Linux'
+        run: sudo apt-get install -y libncurses-dev
+      - run: make NCURSES=1
+      - run: make NCURSES=1 test
       - uses: actions/upload-artifact@v4
         with:
           name: vail-cli-${{ matrix.os }}
           path: cli/build/vail-cli
+
+  # ncurses is optional: everything else must work without it.
+  cli-no-ncurses:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - run: make NCURSES=0
+      - run: make NCURSES=0 test
 
   cli-windows:
     runs-on: windows-latest
@@ -39,9 +52,9 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          install: make mingw-w64-x86_64-gcc mingw-w64-x86_64-python
-      - run: make
-      - run: make test
+          install: make mingw-w64-x86_64-gcc mingw-w64-x86_64-python mingw-w64-x86_64-ncurses
+      - run: make NCURSES=1
+      - run: make NCURSES=1 test
       - uses: actions/upload-artifact@v4
         with:
           name: vail-cli-windows

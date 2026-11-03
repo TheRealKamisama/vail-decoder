@@ -65,7 +65,8 @@ Reported from the reviewer's own runs, and not re-run:
    second channel printed nothing for about 3.6 minutes, and a longer message could lose text.
 6. `judge` compares on-frames at different relative thresholds, so a clipped station's harmonic can pass as real and the
    text prints twice.
-7. Ctrl+C does not interrupt an idle pipe on stdin, because `signal()` restarts the blocking read on glibc.
+7. **Fixed:** Ctrl+C did not interrupt an idle pipe on stdin, because `signal()` restarted the blocking read on glibc. The
+   full-screen view needed stdin not to block at all, so it no longer does, and the `signals-on-idle-stream` test guards it.
 8. Continuation lines carry the print time, not the time the text started.
 
 From reading the code only:

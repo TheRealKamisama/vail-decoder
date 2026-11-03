@@ -67,6 +67,9 @@ int vail_channel_text(const vail_api *h, int idx, char *buf, int cap, int *pitch
  * follows the text moves its position back by the increase; repeating text makes this impossible to tell from the
  * text itself. */
 long vail_channel_dropped(const vail_api *h, int idx);
+/* That channel's numbers, as API_Snr, API_Wpm and API_State give them for the current channel. Returns 0 if there is
+ * no such channel. Any pointer may be NULL. */
+int vail_channel_stats(const vail_api *h, int idx, int *snrDb, int *wpm, int *state);
 
 #ifdef __cplusplus
 }

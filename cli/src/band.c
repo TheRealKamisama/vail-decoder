@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "band.h"
+#include "text.h"
 #include "vail_internal.h"   /* struct vail_fe: the whole spectrum of the FFT the engine's front end ran */
 
 /* An engine looks for new signals in bins 10..117 of its 128-bin slice. Slices start every 92 FFT bins,
@@ -30,10 +31,12 @@
 #define QUIET_FRAMES 376                    /* 4 s without new text ends a line */
 #define DRAIN_FRAMES 377                    /* 4 s of silence lets the engines finish */
 #define TEXT_CAP     (3 * MSG_CAPACITY + 8) /* a character renders to at most 3 bytes */
+#define TWIN_BINS    2                      /* 16 Hz: in an overlap of slices, two engines hear one signal this close */
 
 /* The engine forgets a channel's text when the channel retires, so each one is followed here. */
 typedef struct {
     int id, engine, bin;                    /* bin: in the FFT, so comparable between engines */
+    int snr, wpm, state;
     int hidden;                             /* not shown: outside the band, or not a station */
     int passed;                             /* checks passed; at CHECKS_TO_PASS it is a station */
     int seen;
@@ -56,6 +59,8 @@ struct band {
     int nTracks, capTracks;
     struct { int id, bin; } *channels;      /* every live channel of every engine, text or not */
     int nChannels, capChannels;
+    int showAll;
+    long hiddenLines;
     band_line_fn *onLine;
     void *ctx;
 };
@@ -63,7 +68,7 @@ struct band {
 static int slice_start(int e) { return SLICE_FIRST + e * SLICE_STEP; }
 static int bin_hz(int bin) { return (int)lrint(bin * HZ_PER_BIN); }
 
-band *band_new(int loHz, int hiHz, band_line_fn *onLine, void *ctx)
+band *band_new(int loHz, int hiHz, int showAll, band_line_fn *onLine, void *ctx)
 {
     band *b = calloc(1, sizeof *b);
     int e;
@@ -74,6 +79,7 @@ band *band_new(int loHz, int hiHz, band_line_fn *onLine, void *ctx)
     if (!b->fe || !b->history) abort();
     b->loBin = (int)floor(loHz / HZ_PER_BIN);
     b->hiBin = (int)ceil(hiHz / HZ_PER_BIN);
+    b->showAll = showAll;
     b->onLine = onLine;
     b->ctx = ctx;
     for (e = 0; e < ENGINES; e++) {
@@ -103,10 +109,23 @@ static int count_chars(const char *s, int len)
     return n;
 }
 
+/* Whether an older channel of another engine is on the same signal, as in an overlap of slices. It is not final: when the
+ * older one retires, as a drifting signal leaves its slice, this one carries on. */
+static int has_older_twin(const band *b, const track *t)
+{
+    int i;
+    for (i = 0; i < b->nTracks; i++) {
+        const track *o = b->tracks[i];
+        if (o->id < t->id && o->engine != t->engine && o->seen && is_station(o) && abs(o->bin - t->bin) <= TWIN_BINS)
+            return 1;
+    }
+    return 0;
+}
+
 /* Prints up to LINE_CHARS characters of the unprinted text, ending at the end of a word if it can. */
 static void print_line(band *b, track *t)
 {
-    char line[TEXT_CAP];
+    char line[TEXT_TIDY_SIZE(TEXT_CAP)];
     int from = offset_of_char(t->text, t->len, t->printed), to = from, n = 0, end;
     while (to < t->len && n < LINE_CHARS) n += t->text[to++] != ' ';
     if (to < t->len && t->text[to] != ' ') {
@@ -115,10 +134,20 @@ static void print_line(band *b, track *t)
         if (word > from) to = word;
     }
     for (end = to; end > from && t->text[end - 1] == ' '; end--) {}
-    if (is_station(t) && end > from) {
-        memcpy(line, t->text + from, (size_t)(end - from));
-        line[end - from] = 0;
-        b->onLine(b->ctx, t->started, bin_hz(t->bin), line);
+    if (is_station(t) && end > from && !has_older_twin(b, t)) {
+        if (b->showAll || text_looks_like_morse(t->text, end)) {
+            band_line out;
+            text_tidy(t->text + from, end - from, line);
+            out.frame = t->started;
+            out.channel = t->id;
+            out.hz = bin_hz(t->bin);
+            out.snr = t->snr;
+            out.wpm = t->wpm;
+            out.text = line;
+            b->onLine(b->ctx, &out);
+        } else {
+            b->hiddenLines++;
+        }
     }
     t->printed += count_chars(t->text + from, to - from);
     t->started = b->frame;
@@ -198,6 +227,7 @@ static void poll_channels(band *b)
             }
             t->bin = bin;
             t->seen = 1;
+            vail_channel_stats(b->engine[e], i, &t->snr, &t->wpm, &t->state);
             track_update(b, t, text, len, vail_channel_dropped(b->engine[e], i));
         }
     }
@@ -327,22 +357,35 @@ void band_finish(band *b)
     for (i = 0; i < b->nTracks; i++) print_all(b, b->tracks[i]);
 }
 
-int band_signals(const band *b, band_signal *out, int max)
+int band_signals(const band *b, band_signal *out, int max, int unprintedOnly)
 {
+    char tidy[TEXT_TIDY_SIZE(TEXT_CAP)];
     int i, n = 0;
     for (i = 0; i < b->nTracks && n < max; i++) {
         const track *t = b->tracks[i];
+        const char *text;
         band_signal s;
-        int j;
-        if (!is_station(t) || t->printed >= count_chars(t->text, t->len)) continue;
+        int j, from = 0, len;
+        if (!is_station(t) || has_older_twin(b, t)) continue;
+        if (!b->showAll && !text_looks_like_morse(t->text, t->len)) continue;
+        if (unprintedOnly) {
+            if (t->printed >= count_chars(t->text, t->len)) continue;
+            from = offset_of_char(t->text, t->len, t->printed);
+        }
+        len = text_tidy(t->text + from, t->len - from, tidy);
+        text = len < BAND_LIVE_TEXT ? tidy : tidy + len - (BAND_LIVE_TEXT - 1);
         s.hz = bin_hz(t->bin);
-        s.text = t->text + offset_of_char(t->text, t->len, t->printed);
+        s.snr = t->snr;
+        s.wpm = t->wpm;
+        s.decoding = t->state == API_STATE_DECODING || t->state == API_STATE_LOCKED_DECODING;
+        memcpy(s.text, text, strlen(text) + 1);
         for (j = n++; j > 0 && out[j - 1].hz > s.hz; j--) out[j] = out[j - 1];
         out[j] = s;
     }
     return n;
 }
 
+long band_hidden_lines(const band *b) { return b->hiddenLines; }
 long band_frame(const band *b) { return b->frame; }
 
 void band_free(band *b)

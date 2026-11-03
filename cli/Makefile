@@ -6,6 +6,10 @@
 #   make test             build, then run the end-to-end tests (needs python3)
 #   make install          copy the binary and man page under PREFIX (default /usr/local)
 #   make CC="zig cc -target x86_64-windows-gnu" TARGET=Windows   cross-compile
+#   make NCURSES=0        build without the full-screen view
+#
+# ncurses is optional. If it is found the full-screen view is built in, and if not, everything else still is;
+# `vail-cli --version` says which. CURSES_CFLAGS and CURSES_LIBS override what is found, as a release does to link it statically.
 
 ENGINE := ../src
 
@@ -29,6 +33,23 @@ else
   LDLIBS := -lm -lpthread -ldl
 endif
 
+NCURSES ?= auto
+ifneq ($(NCURSES),0)
+  ifndef CURSES_LIBS
+    CURSES_FOUND := $(shell CC="$(CC)" EXTRA_LIBS="$(if $(filter Windows,$(TARGET)),-static)" sh curses-flags.sh)
+    CURSES_CFLAGS := $(shell printf '%s' '$(CURSES_FOUND)' | cut -d'|' -f1)
+    CURSES_LIBS := $(shell printf '%s' '$(CURSES_FOUND)' | cut -s -d'|' -f2)
+  endif
+  ifeq ($(strip $(CURSES_LIBS)),)
+    ifeq ($(NCURSES),1)
+      $(error NCURSES=1, but no ncurses could be found to link with)
+    endif
+  else
+    VIEW_FLAGS := -DVAIL_CLI_NCURSES $(CURSES_CFLAGS)
+    LDLIBS := $(CURSES_LIBS) $(LDLIBS)
+  endif
+endif
+
 BIN     := $(BUILD)/vail-cli$(EXE)
 OURS    := $(wildcard src/*.c)
 HEADERS := $(wildcard src/*.h) $(wildcard $(ENGINE)/*.h)
@@ -44,6 +65,10 @@ $(BIN): $(OBJS)
 
 $(BUILD)/%.o: src/%.c $(HEADERS) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -c -o $@ $<
+
+# Its own rule, as whether ncurses is used must show in the object.
+$(BUILD)/view.o: src/view.c $(HEADERS) Makefile | $(BUILD)
+	$(CC) $(CPPFLAGS) $(VIEW_FLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -c -o $@ $<
 
 $(BUILD)/engine_%.o: $(ENGINE)/%.c $(HEADERS) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -c -o $@ $<

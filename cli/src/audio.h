@@ -9,24 +9,37 @@ typedef struct audio audio;
 
 enum { AUDIO_END = -1, AUDIO_WAIT = 0, AUDIO_OK = 1 };
 
+/* How raw samples on stdin are laid out: always little-endian and interleaved. */
+typedef enum { AUDIO_S16, AUDIO_F32 } audio_format;
+
+typedef struct {
+    int rate;                                /* samples per second, 4000 or more */
+    audio_format format;
+    int channels;
+} audio_raw;
+
 /* Prints the input devices to stdout. Returns 0, or 1 with a message on stderr. */
 int audio_list(void);
 
 /* Each returns NULL with a message on stderr on failure.
- * device: a number from audio_list, part of a device's name, or NULL for the system default.
- * path:   a sound file (WAV, FLAC, MP3), resampled as needed.
- * stdin:  raw signed 16-bit little-endian samples, 8 kHz mono. */
-audio *audio_open_device(const char *device);
-audio *audio_open_file(const char *path);
-audio *audio_open_stdin(void);
+ * device:  a number from audio_list, part of a device's name, or NULL for the system default.
+ * path:    a sound file (WAV, FLAC, MP3), resampled as needed.
+ * stdin:   raw samples, resampled as needed.
+ * channel: decode this channel of the input, counting from 1; 0 mixes them all. */
+audio *audio_open_device(const char *device, int channel);
+audio *audio_open_file(const char *path, int channel);
+audio *audio_open_stdin(const audio_raw *raw, int channel);
 
-/* Reads exactly n samples, or says why it cannot: AUDIO_WAIT means none are ready yet (devices only),
- * AUDIO_END that the source ended, on its own or because a device stopped. */
+/* Reads exactly n samples, at most AUDIO_MAX_READ, or says why it cannot: AUDIO_WAIT means none are ready yet (never
+ * from a file), so a program waiting for a stream can still see keys and signals; AUDIO_END that the source ended, on
+ * its own or because a device stopped. */
+#define AUDIO_MAX_READ 256
 int audio_read(audio *a, int16_t *samples, int n);
 
-const char *audio_name(const audio *a);          /* the device's name, for messages */
-int  audio_is_live(const audio *a);              /* a sound device, as opposed to a file or a stream */
-int  audio_failed(const audio *a);               /* the device stopped on its own */
+const char *audio_name(const audio *a);          /* the device's name or the file's, for messages */
+int  audio_is_device(const audio *a);            /* a sound device: its times are the time of day */
+int  audio_is_stream(const audio *a);            /* samples on stdin */
+int  audio_failed(const audio *a);               /* the device stopped on its own, or stdin could not be read */
 long audio_lost_samples(const audio *a);         /* samples dropped because decoding fell behind */
 void audio_close(audio *a);
 

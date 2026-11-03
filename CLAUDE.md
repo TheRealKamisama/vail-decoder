@@ -25,7 +25,8 @@ python3 tools/weak.py [--full] [--builds A,B] [--snr ..] [--cond ..] [--show]   
 python3 tools/elemcheck.py [--build DIR] [--snr -10,-12] [--cond clean]  # element errors vs ground truth
 python3 tools/lmgen.py                       # regenerates src/lm_table.h (CVD character trigram)
 python3 tools/closepair.py [--builds A,B]    # two close stations, both scored, ghosts counted (docs/close-signals.md)
-(cd cli && make && make test)                # build/vail-cli and its end-to-end tests
+python3 tools/notmorse.py [--seeds N] [--show] [--wav F..]   # speech, music, data modes: false text, and real text lost
+(cd cli && make && make test)                # build/vail-cli and its end-to-end tests; make NCURSES=0 leaves the view out
 ```
 
 `./build-windows.sh` cross-compiles `build/win/vail_decode.exe`. `vail-cli -r rec.wav` records a live session
@@ -48,6 +49,10 @@ know about `cli/`. `cli/` depends on the engine and has its own `Makefile`, `tes
 `third_party/miniaudio` (which has no SPDX line of its own). `cli/src/band.c` reads the whole FFT through
 `vail_internal.h`, so a change to `struct vail_fe` or the window must be checked there too. A change to the engine's
 behaviour is measured with `tools/eval.py` and `tools/weak.py`; `cli/tests/e2e.py` only guards the product.
+
+ncurses is optional for `cli/` (`view.c` compiles to stubs without it), and everything but the full-screen view must work
+without it. The engine gives no measure of whether a channel is Morse at all, so `cli/src/text.c` judges from the text; what
+the engine would need for this is in `docs/engine-confidence.md`.
 
 ## Versions and releases
 

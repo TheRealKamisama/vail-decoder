@@ -1,9 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* vail-cli — decode every CW signal a rig's sound card can hear, as lines of text.
+/* vail-cli — decode every CW signal a rig's sound card can hear.
  *
- * stdout carries finished lines and nothing else. On a terminal, a sound device's signals are also shown
- * below them while they are being heard, in a live area that is cleared before each line is printed. */
-#include <errno.h>
+ * stdout carries finished lines and nothing else, unless it is the terminal. There, a full-screen view (view.c, where
+ * ncurses was found) or a live area below the lines (output.c) shows what is being heard. */
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
@@ -12,67 +11,48 @@
 #include <time.h>
 #include "audio.h"
 #include "band.h"
+#include "options.h"
+#include "output.h"
+#include "report.h"
+#include "view.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <io.h>
 #else
-#include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 
-#define VERSION      "0.1.0"
+#define VERSION       "0.1.0"
 #define FRAME_SECONDS (VAIL_HOP_SAMPLES / (double)VAIL_SAMPLE_RATE)
-#define DRAW_FRAMES  19                      /* about 5 times a second */
-#define LEVEL_FRAMES 47                      /* the input level is measured over about half a second */
-#define MAX_ROWS     64
-#define MAX_COLS     240
-
-static const char USAGE[] =
-"usage: vail-cli [options] [file]\n"
-"\n"
-"Decodes every CW signal in the audio passband, from the system's default sound input,\n"
-"or from a sound file (WAV, FLAC, MP3). A file of - is raw 16-bit 8 kHz mono from stdin.\n"
-"\n"
-"  -l, --list         list the sound input devices and exit\n"
-"  -d, --device DEV   use this device: its number in the list, or part of its name\n"
-"  -b, --band LO-HI   only decode signals between LO and HI Hz (default: %d-%d)\n"
-"  -r, --record FILE  also record the audio to a WAV file (8 kHz, for replaying later)\n"
-"  -h, --help         show this help and exit\n"
-"  -V, --version      show the version and exit\n"
-"\n"
-"Each line of output is: time (UTC, or from the start of a file), pitch in Hz, text.\n";
+#define KEYS_MS       20                     /* how often keys are looked at */
+#define DRAW_MS       200                    /* and the screen redrawn */
+#define HOLD_MS       50                     /* when nothing else is going on */
+#define LEVEL_FRAMES  47                     /* the input level is measured over about half a second */
+#define SILENT_FRAMES 941                    /* 10 s of silence is worth telling someone without a screen */
+#define CLIP_REPEAT_FRAMES 5647              /* say so again after a minute of it */
 
 static volatile sig_atomic_t g_stop = 0;
-static int g_outputEnded = 0, g_outputFailed = 0;
 
 static void on_signal(int s) { (void)s; g_stop = 1; }
 
-/* Call straight after the failed write. */
-static int reader_is_gone(int err)
+static void watch_signals(void)
 {
 #ifdef _WIN32
-    DWORD e = GetLastError();                /* the C library calls a closed pipe EINVAL */
-    if (e == ERROR_NO_DATA || e == ERROR_BROKEN_PIPE) return 1;
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+#else
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    sigemptyset(&action.sa_mask);
+    action.sa_handler = on_signal;           /* no SA_RESTART: nothing should wait out a signal */
+    sigaction(SIGINT, &action, NULL);
+    sigaction(SIGTERM, &action, NULL);
+    sigaction(SIGHUP, &action, NULL);        /* so that a recording still gets its length when the terminal closes */
+    action.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &action, NULL);       /* a closed pipe is seen as a failed write */
 #endif
-    return err == EPIPE;
-}
-
-/* A reader that has gone away, as in `vail-cli | head`, is only a reason to stop. Any other failure is an error. */
-static void output_failed(int err)
-{
-    g_stop = 1;
-    if (g_outputEnded) return;
-    g_outputEnded = 1;
-    if (reader_is_gone(err)) return;
-    fprintf(stderr, "vail-cli: cannot write the output: %s\n", strerror(err));
-    g_outputFailed = 1;
-}
-
-static void flush_output(void)
-{
-    if (fflush(stdout) == EOF) output_failed(errno);
 }
 
 static void sleep_ms(int ms)
@@ -87,253 +67,315 @@ static void sleep_ms(int ms)
 #endif
 }
 
-static int stdout_is_terminal(void)
+static long now_ms(void)
+{
+#ifdef _WIN32
+    return (long)GetTickCount64();
+#else
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000L + t.tv_nsec / 1000000L;
+#endif
+}
+
+static int stdin_is_terminal(void)
+{
+#ifdef _WIN32
+    return _isatty(_fileno(stdin));
+#else
+    return isatty(0);
+#endif
+}
+
+/* The terminal needs to take escape codes for the live area. */
+static int terminal_takes_codes(void)
 {
 #ifdef _WIN32
     HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode;
-    if (!_isatty(_fileno(stdout)) || !GetConsoleMode(h, &mode)) return 0;
-    return SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;   /* else no live area */
+    if (!GetConsoleMode(h, &mode)) return 0;
+    return SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
 #else
-    return isatty(1);
+    const char *term = getenv("TERM");
+    return term && *term && strcmp(term, "dumb");
 #endif
 }
 
-static void terminal_size(int *rows, int *cols)
-{
-    *rows = 24;
-    *cols = 80;
-#ifdef _WIN32
-    {
-        CONSOLE_SCREEN_BUFFER_INFO info;
-        if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
-            *rows = info.srWindow.Bottom - info.srWindow.Top + 1;
-            *cols = info.srWindow.Right - info.srWindow.Left + 1;
-        }
-    }
-#else
-    {
-        struct winsize w;
-        if (ioctl(1, TIOCGWINSZ, &w) == 0 && w.ws_row > 0 && w.ws_col > 0) {
-            *rows = w.ws_row;
-            *cols = w.ws_col;
-        }
-    }
-#endif
-}
-
-/* --------------------------------------------------------------------------------- output */
+/* ------------------------------------------------------------------------------ the input level */
 
 typedef struct {
-    band *band;
-    int live;                                /* sound device: wall-clock times */
-    int showArea;                            /* terminal: signals are shown as they are heard */
-    int areaRows;
-    char area[(MAX_ROWS + 1) * (MAX_COLS + 16)], lastArea[(MAX_ROWS + 1) * (MAX_COLS + 16)];
-    double levelSum;
-    int levelCount, clipped;
-    double levelDb;                          /* -inf when the input is silent */
+    double sum;
+    int count, clipped;
+    int known;                               /* there has been enough audio to measure */
+    double db;                               /* -inf when the input is silent */
     int clipping;
-} output;
+    long silentFrames, clipFrames;
+    int saidSilent, saidClipping;
+} level;
 
-static void clear_area(output *o)
-{
-    if (o->areaRows > 0) {
-        printf("\033[%dA\r\033[J", o->areaRows);
-        o->areaRows = 0;
-    }
-    o->lastArea[0] = 0;
-}
-
-static void put_line(void *ctx, long frame, int hz, const char *text)
-{
-    output *o = ctx;
-    time_t when;
-    int secs;
-    if (o->showArea) clear_area(o);
-    if (o->live) {
-        const struct tm *tm;
-        when = time(NULL) - (time_t)((band_frame(o->band) - frame) * FRAME_SECONDS);
-        tm = gmtime(&when);
-        secs = tm ? tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec : 0;
-    } else {
-        secs = (int)(frame * FRAME_SECONDS);
-    }
-    printf("%02d:%02d:%02d %5d  %s\n", secs / 3600, secs / 60 % 60, secs % 60, hz, text);
-    flush_output();
-}
-
-static void measure_level(output *o, const int16_t *s)
+static void measure_level(level *l, const int16_t *s)
 {
     int i;
     for (i = 0; i < VAIL_HOP_SAMPLES; i++) {
-        o->levelSum += (double)s[i] * s[i];
-        o->clipped |= s[i] >= 32767 || s[i] <= -32768;
+        l->sum += (double)s[i] * s[i];
+        l->clipped |= s[i] >= 32767 || s[i] <= -32768;
     }
-    if (++o->levelCount == LEVEL_FRAMES) {
-        double power = o->levelSum / (LEVEL_FRAMES * VAIL_HOP_SAMPLES) / (32768.0 * 32768.0);
-        o->levelDb = power > 0 ? 10 * log10(power) : -HUGE_VAL;
-        o->clipping = o->clipped;
-        o->levelSum = 0;
-        o->levelCount = o->clipped = 0;
+    if (++l->count == LEVEL_FRAMES) {
+        double power = l->sum / (LEVEL_FRAMES * VAIL_HOP_SAMPLES) / (32768.0 * 32768.0);
+        l->db = power > 0 ? 10 * log10(power) : -HUGE_VAL;
+        l->known = 1;
+        l->clipping = l->clipped;
+        l->sum = 0;
+        l->count = l->clipped = 0;
     }
 }
 
-/* Appends one row, cut to the width of the terminal, keeping the end of the text (the newest part). */
-static char *put_row(char *p, int cols, int hz, const char *text)
+static void level_status(const level *l, char *out, size_t size)
 {
-    int room = cols - 17, len = (int)strlen(text);
-    if (room < 8) room = 8;
-    if (room > MAX_COLS) room = MAX_COLS;
-    if (len > room) { text += len - room; len = room; }
-    return p + sprintf(p, "\033[2m         %5d  %.*s\033[0m\n", hz, len, text);
+    if (!l->known) snprintf(out, size, "waiting for audio");
+    else if (l->clipping) snprintf(out, size, "input is clipping: turn the audio level down");
+    else if (isinf(l->db)) snprintf(out, size, "input is silent");
+    else snprintf(out, size, "input %.0f dBFS", l->db);
 }
 
-static void draw_area(output *o)
+/* With nothing on the screen to show the level, the two things it would warn of are said once, when they happen. */
+static void level_warn(level *l)
 {
-    band_signal sig[MAX_ROWS];
-    char *p = o->area;
-    int rows, cols, n, i;
-    terminal_size(&rows, &cols);
-    rows -= 2;                               /* the status row, and the cursor's */
-    if (rows > MAX_ROWS) rows = MAX_ROWS;
-    n = band_signals(o->band, sig, rows > 0 ? rows : 0);
-    for (i = 0; i < n; i++) p = put_row(p, cols, sig[i].hz, sig[i].text);
-    if (o->clipping)
-        p += sprintf(p, "\033[2minput is clipping: turn the audio level down\033[0m\n");
-    else if (isinf(o->levelDb))
-        p += sprintf(p, "\033[2minput is silent\033[0m\n");
-    else
-        p += sprintf(p, "\033[2minput %.0f dBFS\033[0m\n", o->levelDb);
-    if (!strcmp(o->area, o->lastArea)) return;
-    clear_area(o);
-    fputs(o->area, stdout);
-    o->areaRows = n + 1;
-    strcpy(o->lastArea, o->area);
-    flush_output();
+    if (!l->known) return;
+    if (isinf(l->db)) {
+        l->silentFrames++;
+        if (l->silentFrames >= SILENT_FRAMES && !l->saidSilent) {
+            report("input is silent: check the device, its level and whether this program may use it");
+            l->saidSilent = 1;
+        }
+    } else {
+        l->silentFrames = 0;
+        l->saidSilent = 0;
+    }
+    if (l->clipFrames > 0) l->clipFrames--;
+    if (l->clipping && l->clipFrames == 0) {
+        report("input is clipping: turn the audio level down");
+        l->clipFrames = CLIP_REPEAT_FRAMES;
+    }
 }
 
-/* ------------------------------------------------------------------------------- arguments */
+/* ------------------------------------------------------------------------------- one run */
 
-static int usage_error(const char *fmt, const char *arg)
+typedef struct {
+    const options *opt;
+    audio *audio;
+    audio_rec *rec;
+    band *band;
+    view *view;
+    int viewOwnsStdout;                      /* stdout is the terminal the view is on, so lines wait for it to close */
+    int showArea;
+    level level;
+} session;
+
+static void on_line(void *ctx, const band_line *line)
 {
-    fprintf(stderr, "vail-cli: ");
-    fprintf(stderr, fmt, arg);
-    fprintf(stderr, "\nTry vail-cli --help.\n");
-    return 2;
+    session *s = ctx;
+    if (s->view) {
+        char stamp[OUTPUT_STAMP_SIZE];
+        output_stamp(line, band_frame(s->band), stamp);
+        view_line(s->view, stamp, line->hz, line->text);
+    }
+    if (!s->viewOwnsStdout) output_line(line, band_frame(s->band));
 }
 
-static int parse_band(const char *s, int *lo, int *hi)
+static void clock_text(const session *s, char *out, size_t size)
 {
-    char end;
-    if (sscanf(s, "%d-%d%c", lo, hi, &end) != 2) return 0;
-    return *lo >= 0 && *lo < *hi && *lo <= BAND_MAX_HZ && *hi >= BAND_MIN_HZ;
+    int secs;
+    if (audio_is_device(s->audio)) {
+        time_t now = time(NULL);
+        const struct tm *tm = gmtime(&now);
+        secs = tm ? tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec : 0;
+        snprintf(out, size, "%02d:%02d:%02d UTC", secs / 3600, secs / 60 % 60, secs % 60);
+    } else {
+        secs = (int)(band_frame(s->band) * FRAME_SECONDS);
+        snprintf(out, size, "%02d:%02d:%02d", secs / 3600 % 100, secs / 60 % 60, secs % 60);
+    }
 }
 
-/* The value of the option at argv[*i], or NULL if it has none. */
-static const char *option_value(int argc, char **argv, int *i)
+static void draw_screen(session *s, int finished)
 {
-    return *i + 1 < argc ? argv[++*i] : NULL;
+    if (s->view) {
+        char clock[32];
+        view_status st;
+        clock_text(s, clock, sizeof clock);
+        memset(&st, 0, sizeof st);
+        st.clock = clock;
+        st.hasLevel = audio_is_device(s->audio) || audio_is_stream(s->audio);
+        st.levelKnown = s->level.known;
+        st.levelDb = s->level.db;
+        st.clipping = s->level.clipping;
+        st.finished = finished;
+        st.lostSeconds = audio_lost_samples(s->audio) / (double)VAIL_SAMPLE_RATE;
+        st.hiddenLines = band_hidden_lines(s->band);
+        st.showAll = s->opt->all;
+        view_draw(s->view, s->band, &st);
+    } else if (s->showArea) {
+        char status[64];
+        level_status(&s->level, status, sizeof status);
+        output_area_draw(s->band, status);
+    }
 }
 
-static int run(int argc, char **argv)
+/* Picks how to show what is being heard. Returns 0 if what was asked for cannot be done. */
+static int choose_display(session *s)
 {
-    static output o;
-    const char *device = NULL, *path = NULL, *recordPath = NULL;
-    int lo = BAND_MIN_HZ, hi = BAND_MAX_HZ, i, r, status = 0, list = 0, optionsDone = 0;
-    audio *a;
-    audio_rec *rec = NULL;
-    band *b;
-
-    for (i = 1; i < argc; i++) {
-        const char *arg = argv[i];
-        if (optionsDone || arg[0] != '-' || !strcmp(arg, "-")) {
-            if (path) return usage_error("only one file at a time: %s", arg);
-            path = arg;
-        } else if (!strcmp(arg, "--")) {
-            optionsDone = 1;
-        } else if (!strcmp(arg, "-h") || !strcmp(arg, "--help")) {
-            printf(USAGE, BAND_MIN_HZ, BAND_MAX_HZ);
+    const options *o = s->opt;
+    int streaming = audio_is_device(s->audio) || audio_is_stream(s->audio);
+    int terminal = output_is_terminal();
+    int wantView = o->view || (terminal && streaming && !o->plain && !o->json);
+    if (wantView) {
+        const char *reason = NULL;
+        char source[300];
+        if (o->channel) snprintf(source, sizeof source, "%s, channel %d", audio_name(s->audio), o->channel);
+        else snprintf(source, sizeof source, "%s", audio_name(s->audio));
+        s->view = view_open(source, o->lo, o->hi, &reason);
+        if (!s->view && o->view) {
+            report("cannot open the full-screen view: %s", reason);
             return 0;
-        } else if (!strcmp(arg, "-V") || !strcmp(arg, "--version")) {
-            printf("vail-cli %s (vail engine %s)\n", VERSION, vail_version());
-            return 0;
-        } else if (!strcmp(arg, "-l") || !strcmp(arg, "--list")) {
-            list = 1;
-        } else if (!strcmp(arg, "-d") || !strcmp(arg, "--device")) {
-            if (!(device = option_value(argc, argv, &i))) return usage_error("%s needs a device", arg);
-        } else if (!strcmp(arg, "-r") || !strcmp(arg, "--record")) {
-            if (!(recordPath = option_value(argc, argv, &i))) return usage_error("%s needs a file", arg);
-        } else if (!strcmp(arg, "-b") || !strcmp(arg, "--band")) {
-            const char *v = option_value(argc, argv, &i);
-            if (!v) return usage_error("%s needs LO-HI", arg);
-            if (!parse_band(v, &lo, &hi)) return usage_error("not a band of audio frequencies: %s", v);
-        } else {
-            return usage_error("unknown option: %s", arg);
         }
     }
-    if (list) return audio_list();
-    if (path && device) return usage_error("%s", "a file and a device cannot both be read");
+    if (s->view) {
+        report_hold();
+        s->viewOwnsStdout = terminal;
+    } else if (terminal && audio_is_device(s->audio) && !o->plain && !o->json && terminal_takes_codes()) {
+        s->showArea = 1;
+    }
+    return 1;
+}
 
-    a = !path ? audio_open_device(device) : strcmp(path, "-") ? audio_open_file(path) : audio_open_stdin();
-    if (!a) return 1;
-    if (recordPath && !(rec = audio_rec_open(recordPath))) { audio_close(a); return 1; }
-    b = band_new(lo, hi, put_line, &o);
-    if (!b) { audio_rec_close(rec); audio_close(a); return 1; }
+static int decode(session *s, int *status)
+{
+    const options *o = s->opt;
+    long limit = o->seconds > 0 ? (long)ceil(o->seconds / FRAME_SECONDS) : 0;
+    long lastKeys = 0, lastDraw = 0, fed = 0;
+    int live = audio_is_device(s->audio) || audio_is_stream(s->audio);
 
-    o.band = b;
-    o.live = audio_is_live(a);
-    o.showArea = o.live && stdout_is_terminal();
-    o.levelDb = -HUGE_VAL;
-    setvbuf(stdout, NULL, _IOFBF, 1 << 16);
-    signal(SIGINT, on_signal);
-    signal(SIGTERM, on_signal);
-#ifdef SIGPIPE
-    signal(SIGPIPE, SIG_IGN);                /* a closed pipe is seen as a failed write */
-#endif
-    if (o.live) fprintf(stderr, "vail-cli: listening on %s, %d-%d Hz; Ctrl+C to stop\n", audio_name(a), lo, hi);
-
-    while (!g_stop) {
+    while (!g_stop && !output_ended() && (!limit || fed < limit)) {
         int16_t samples[VAIL_HOP_SAMPLES];
-        r = audio_read(a, samples, VAIL_HOP_SAMPLES);
+        int r = audio_read(s->audio, samples, VAIL_HOP_SAMPLES);
+        long now;
         if (r == AUDIO_END) break;
-        if (r == AUDIO_WAIT) { sleep_ms(5); continue; }
-        if (rec && !audio_rec_write(rec, samples, VAIL_HOP_SAMPLES)) {   /* the text goes on without the recording */
-            if (o.showArea) clear_area(&o);
-            flush_output();
-            audio_rec_close(rec);
-            rec = NULL;
-            status = 1;
+        if (r == AUDIO_OK) {
+            if (s->rec && !audio_rec_write(s->rec, samples, VAIL_HOP_SAMPLES)) {   /* the text goes on without the recording */
+                output_area_clear();
+                output_flush();
+                audio_rec_close(s->rec);
+                s->rec = NULL;
+                *status = 1;
+            }
+            if (live) {
+                measure_level(&s->level, samples);
+                if (!s->view && !s->showArea && audio_is_device(s->audio)) level_warn(&s->level);
+            }
+            band_feed(s->band, samples);
+            fed++;
         }
-        if (o.showArea) measure_level(&o, samples);
-        band_feed(b, samples);
-        if (o.showArea && band_frame(b) % DRAW_FRAMES == 0) draw_area(&o);
+        now = now_ms();
+        if (s->view && now - lastKeys >= KEYS_MS) {
+            lastKeys = now;
+            if (view_keys(s->view)) return 1;
+        }
+        if ((s->view || s->showArea) && now - lastDraw >= DRAW_MS) {
+            lastDraw = now;
+            draw_screen(s, 0);
+        }
+        if (r == AUDIO_WAIT) sleep_ms(5);
     }
+    return g_stop || output_ended();
+}
 
-    if (audio_failed(a)) {
-        if (o.showArea) clear_area(&o);
-        flush_output();
-        fprintf(stderr, "vail-cli: the sound device stopped\n");
+/* The audio has ended by itself, and the view stays until it is closed, so what it shows can be read. */
+static void hold_view(session *s)
+{
+    while (!g_stop && !view_keys(s->view)) {
+        draw_screen(s, 1);
+        sleep_ms(HOLD_MS);
+    }
+}
+
+static int run(const options *o)
+{
+    static session s;
+    int status = 0, stoppedByUser;
+    long lost;
+
+    s.opt = o;
+    s.level.db = -HUGE_VAL;
+    if (o->path && !strcmp(o->path, "-") && stdin_is_terminal()) {
+        report("a FILE of - reads raw samples from stdin, which is the terminal. Send them through a pipe, as in:");
+        fprintf(stderr, "  arecord -t raw -f S16_LE -r 48000 | vail-cli -R 48000 -\n");
+        return 2;
+    }
+    s.audio = !o->path ? audio_open_device(o->device, o->channel)
+            : strcmp(o->path, "-") ? audio_open_file(o->path, o->channel)
+            : audio_open_stdin(&o->raw, o->channel);
+    if (!s.audio) return 1;
+    if (o->recordPath && !(s.rec = audio_rec_open(o->recordPath))) { audio_close(s.audio); return 1; }
+    s.band = band_new(o->lo, o->hi, o->all, on_line, &s);
+    if (!s.band) { audio_rec_close(s.rec); audio_close(s.audio); return 1; }
+
+    output_setup(o->json, audio_is_device(s.audio));
+    watch_signals();                         /* before ncurses starts, which would otherwise set its own */
+    if (!choose_display(&s)) { band_free(s.band); audio_rec_close(s.rec); audio_close(s.audio); return 1; }
+    if (audio_is_device(s.audio) && !s.view)
+        report("listening on %s, %d-%d Hz; Ctrl+C to stop", audio_name(s.audio), o->lo, o->hi);
+    draw_screen(&s, 0);
+
+    stoppedByUser = decode(&s, &status);
+
+    if (audio_failed(s.audio)) {
+        if (s.showArea) output_area_clear();
+        output_flush();
+        if (audio_is_device(s.audio)) report("the sound device stopped");
         status = 1;
     }
-    band_finish(b);
-    if (o.showArea) { clear_area(&o); flush_output(); }
-    if (audio_lost_samples(a) > 0)
-        fprintf(stderr, "vail-cli: decoding fell behind: lost %.1f s of audio\n",
-                audio_lost_samples(a) / (double)VAIL_SAMPLE_RATE);
+    band_finish(s.band);
+    if (s.showArea) { output_area_clear(); output_flush(); }
+    if (s.view && !stoppedByUser) hold_view(&s);
 
-    band_free(b);
-    if (!audio_rec_close(rec)) status = 1;
-    audio_close(a);
+    if (s.view) {
+        view_close(s.view);
+        if (s.viewOwnsStdout) {
+            long gone = view_print_lines(s.view, output_text);
+            if (gone > 0) report("the first %ld lines were too many to keep; a log file keeps them all", gone);
+        }
+        report_release();
+    }
+    view_free(s.view);
+    lost = audio_lost_samples(s.audio);
+    if (lost > 0) report("decoding fell behind: lost %.1f s of audio", lost / (double)VAIL_SAMPLE_RATE);
+    if (band_hidden_lines(s.band) > 0)
+        report("left out %ld lines that did not read like Morse; --all shows them", band_hidden_lines(s.band));
+
+    band_free(s.band);
+    if (!audio_rec_close(s.rec)) status = 1;
+    audio_close(s.audio);
     return status;
 }
 
 int main(int argc, char **argv)
 {
-    int status = run(argc, argv);
-    /* Every path ends here, as a closing file can be the first to report a failed write. A stdout that is already closed
-     * is only a failure if there was something to write, and flushing has already said so. */
-    flush_output();
-    if (!g_outputEnded && fclose(stdout) == EOF && errno != EBADF) output_failed(errno);
-    return g_outputFailed ? 1 : status;
+    options o;
+    int status;
+    if (!options_parse(argc, argv, &o)) {
+        status = 2;
+    } else if (o.help) {
+        options_print_help();
+        status = 0;
+    } else if (o.version) {
+        printf("vail-cli %s (vail engine %s)\nfull-screen view: %s\n", VERSION, vail_version(),
+               view_available() ? "yes" : "no, ncurses was not found when this was built");
+        status = 0;
+    } else if (o.list) {
+        status = audio_list();
+    } else {
+        status = run(&o);
+    }
+    output_finish();
+    return output_failed() ? 1 : status;
 }

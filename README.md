@@ -7,7 +7,7 @@ the telegraph and the code.
 | Part | What it is |
 | --- | --- |
 | `src/` | **The engine.** Nothing else here is needed to use it. See [Library use](#library-use). |
-| [`cli/`](cli/README.md) | **vail-cli**, a product built on the engine: a command-line CW skimmer for Linux, macOS and Windows that decodes every signal a rig's sound card can hear. |
+| [`cli/`](cli/README.md) | **vail-cli**, a product built on the engine: a CW skimmer for the terminal, on Linux, macOS and Windows, that decodes every signal a rig's sound card can hear. |
 
 vail takes 8 kHz audio. It finds every CW signal in the 200–1200 Hz band, follows each one in its
 own channel, learns each sender's timing, and produces text that is revised as more context arrives.

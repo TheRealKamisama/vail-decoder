@@ -8,15 +8,18 @@ vail-cli \- decode every CW (Morse) signal a sound card can hear
 .RI [ file ]
 .SH DESCRIPTION
 .B vail-cli
-decodes all CW signals between 200 and 3900 Hz at once, using the vail engine, and prints what they send
-as lines of text. It listens to the system's default sound input unless told otherwise.
+decodes all CW signals between 200 and 3900 Hz at once, using the vail engine, and shows what they send. It
+listens to the system's default sound input unless told otherwise.
 .PP
 A
 .I file
 may be WAV, FLAC or MP3. A file of
 .B \-
-reads raw signed 16-bit little-endian samples, 8 kHz mono, from standard input.
-.SH OPTIONS
+reads raw samples from standard input.
+.PP
+On a terminal, a sound device or a stream of samples opens the full-screen view. A recording, a pipe or a file for
+standard output gives lines of text instead.
+.SH INPUT OPTIONS
 .TP
 .BR \-l ", " \-\-list
 List the sound input devices and exit.
@@ -25,6 +28,10 @@ List the sound input devices and exit.
 Use this device: its number in the list, or any part of its name, in upper or lower case, that matches
 only one device.
 .TP
+.BR \-c ", " \-\-channel " " \fIN\fR
+Decode only this channel of the input, counting from 1: on stereo, 1 is left and 2 is right. By default the channels
+are mixed, so dual-receiver rigs decode both receivers.
+.TP
 .BR \-b ", " \-\-band " " \fILO\-HI\fR
 Only decode signals between
 .I LO
@@ -32,14 +39,93 @@ and
 .I HI
 Hz.
 .TP
+.BR \-s ", " \-\-seconds " " \fIN\fR
+Stop after
+.I N
+seconds of audio.
+.TP
 .BR \-r ", " \-\-record " " \fIFILE\fR
 Also record the audio to a WAV file, at 8 kHz, for replaying later.
+.SH RAW SAMPLES
+These describe the samples on standard input, with a
+.I file
+of
+.BR \- .
+They are always little-endian, and resampled if need be.
+.TP
+.BR \-R ", " \-\-rate " " \fIHZ\fR
+Samples per second, from 4000 to 768000. The default is 8000.
+.TP
+.BR \-F ", " \-\-format " " \fIFMT\fR
+.B s16
+for signed 16-bit, the default, or
+.B f32
+for 32-bit floating point.
+.TP
+.BR \-n ", " \-\-channels " " \fIN\fR
+The number of interleaved channels. The default is 1.
+.SH OUTPUT OPTIONS
+.TP
+.BR \-T ", " \-\-view
+Show the full-screen view, whatever the source is. It is drawn on the controlling terminal, so standard output
+can go to a file or a pipe at the same time. It is an error if there is no terminal to use, or if this copy was built
+without ncurses, which
+.B \-\-version
+says.
+.TP
+.BR \-p ", " \-\-plain
+Print finished lines of text only, even on a terminal, with no escape codes. This suits a screen reader. Warnings about
+the input level go to standard error.
+.TP
+.BR \-j ", " \-\-json
+Print finished lines as JSON Lines.
+.TP
+.BR \-a ", " \-\-all
+Also show text that does not read like Morse. See
+.BR "TEXT THAT IS NOT MORSE" .
 .TP
 .BR \-h ", " \-\-help
 Show the help and exit.
 .TP
 .BR \-V ", " \-\-version
-Show the version and exit.
+Show the versions, and whether this copy has the full-screen view, and exit.
+.PP
+A value may be written
+.BR "\-\-band 500\-900" ,
+.B \-\-band=500\-900
+or
+.BR \-b500\-900 .
+Single letters without values may be run together, as in
+.BR \-Ta .
+.SH FULL-SCREEN VIEW
+The top line gives the source, the band, the time and the input level. Below it, each signal has a row with its pitch, the
+engine's estimate of its SNR in dB, in the engine's own narrow bandwidth, its speed in WPM, whether it is decoding or has
+paused, and its newest text, which can still change. Below those is the log of finished lines, and warnings are at the
+bottom.
+.TP
+.BR q ", " Ctrl+C
+Quit.
+.TP
+.B c
+Clear the log. Its lines are still printed when you quit.
+.TP
+.BR Up ", " Down
+Scroll the log a line.
+.TP
+.BR PgUp ", " PgDn
+Scroll it a page.
+.TP
+.BR Home ", " End
+Go to the oldest line, or back to following the newest.
+.TP
+.B ?
+Show help.
+.PP
+If standard output is that terminal, the finished lines are printed when the view closes, up to the last 20000. When the
+audio ends by itself, the view stays until you quit.
+.PP
+.B NO_COLOR
+in the environment turns colour off.
 .SH OUTPUT
 Standard output carries one line for each finished piece of text:
 .PP
@@ -50,19 +136,51 @@ Standard output carries one line for each finished piece of text:
 .RE
 .PP
 The fields are the time the text started, the pitch in Hz, and the text. The time is UTC for a sound device
-and the time from the start for a file or a stream. Lower-case letters are prosigns.
+and the time from the start for a file or a stream. Words have one space between them, and prosigns are written
+as
+.BR <SK> .
 .PP
 A line is printed once its text is final: when the signal has been quiet for 4 seconds, or when 60 characters
-can no longer be revised by the decoder. On a terminal, signals still being heard and the input level are
-shown below the finished lines. They are never written to a pipe or a file.
+can no longer be revised by the decoder. Without the full-screen view, a sound device on a terminal shows signals still
+being heard and the input level below the finished lines. They are never written to a pipe or a file.
+.PP
+With
+.BR \-\-json ,
+each line is an object:
+.PP
+.RS
+.nf
+{"time":12.3,"utc":"2026-11-03T15:33:16Z","channel":7,"frequency":500,"snr":12,"wpm":25,"text":"CQ CQ"}
+.fi
+.RE
+.PP
+.B time
+is seconds from the start of the audio.
+.B utc
+is there only for a sound device. Lines with the same
+.B channel
+came from one channel of the engine.
+.SH TEXT THAT IS NOT MORSE
+The decoder reads anything that keys on and off as Morse, and gives no measure of how well it fits. Speech and music
+come out as many short pieces of letters such as E and T, so what reads like that is left out, and a note on standard
+error says how many lines were. This is judged from the text alone, so:
+.IP \(bu 2
+RTTY and other data modes, which decode to random-looking text, still print. Real text of random-looking letters, such as
+code groups, is why they must.
+.IP \(bu 2
+A very short real message of nothing but the letters E, T, I, A and N is left out.
+.PP
+.B \-\-all
+shows everything.
 .SH EXIT STATUS
 .TP
 .B 0
 Success, including stopping with Ctrl+C or because whatever was reading the output has gone away.
 .TP
 .B 1
-A runtime error, such as a missing device, a device that stops, or output that cannot be written. If a recording
-cannot be written, that is reported at once and decoding goes on without it.
+A runtime error, such as a missing device, a device that stops, output that cannot be written, or no terminal for
+.BR \-\-view .
+If a recording cannot be written, that is reported at once and decoding goes on without it.
 .TP
 .B 2
 A usage error.
@@ -70,9 +188,12 @@ A usage error.
 .nf
 vail-cli -l
 vail-cli -d "USB Audio"
-vail-cli -d 2 -b 500-1500 -r session.wav
+vail-cli -d 2 -c 1 -b 500-1500 -r session.wav
+vail-cli -T >> band.log
 vail-cli | grep --line-buffered K1ABC
+vail-cli --json | jq -r .text
 vail-cli recording.wav > text.log
+arecord -t raw -f S16_LE -r 48000 | vail-cli -R 48000 -
 .fi
 .SH SEE ALSO
 https://github.com/TheRealKamisama/vail-decoder

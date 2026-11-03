@@ -1,54 +1,104 @@
 # vail-cli
 
-Decode every CW (Morse) signal your rig's sound card can hear, as plain lines of text. Think of it as
-a command-line CW Skimmer, built on the [vail engine](../README.md) in this repository. It runs on Linux, macOS
-and Windows and builds into one self-contained binary.
+Decode every CW (Morse) signal your rig's sound card can hear. Think of it as a command-line CW Skimmer, built on the
+[vail engine](../README.md) in this repository. It runs on Linux, macOS and Windows.
 
 ```console
 $ vail-cli -d "USB Audio"
-vail-cli: listening on USB Audio CODEC, 200-3900 Hz; Ctrl+C to stop
-15:33:16   500  CQ CQ CQ DE K1ABC K1ABC K1ABC PSE K
-15:33:17  1398  TEST W1AW W1AW TEST W1AW W1AW TEST
-15:33:16  3297  CQ DX CQ DX DE JA1ZZZ JA1ZZZ UP 5 K
-          2297  VVV VVV DE DL2X
-input -15 dBFS
+ vail-cli  USB Audio CODEC  200-3900 Hz                                 15:33:42 UTC   -14 dBFS [########..]
+ SIGNALS  4
+     Hz  SNR  WPM  STATE   TEXT
+    609   18   24  decode  CQ CQ CQ DE K1ABC K1ABC K1ABC PSE K UR RST 599 599 NAME IS JOHN
+   1203   14   18  decode  VVV VVV DE DL2XYZ DL2XYZ QTH MUNICH MUNICH RIG IS F
+   2109   19   30  pause   .. W1AW W1AW TEST W1AW 5NN 123 TU TEST W1AW 5NN 124 TU QRZ TEST W1AW W1AW TEST W1AW
+   3047    8   22  decode  CQ DX CQ DX DE JA1ZZZ JA1ZZZ UP 5 K R R TNX FER CALL UR RST 44
+ LOG  2 lines
+15:33:10  2109  TEST W1AW W1AW TEST W1AW 5NN 123 TU TEST W1AW 5NN 124 TU QRZ TEST W1AW W1AW
+15:33:39  2109  TEST W1AW
+
+ q quit  c clear  Up/Down PgUp/PgDn scroll  ? help
 ```
 
-Each line is the time the text started (UTC), the pitch in Hz, and the text. On a terminal, signals still
-being heard are shown dimmed below the finished lines, with the input level. That part is never written to a
-pipe or file, so stdout is always clean, finished lines:
+Each signal has a row that updates in place, and finished lines collect in the log below. When you quit, the terminal comes
+back as it was and the lines are printed there, so nothing is lost with the screen.
+
+Send stdout anywhere else and it is finished lines of text, always clean:
 
 ```sh
 vail-cli | grep --line-buffered K1ABC        # watch for a callsign
 vail-cli >> band.log                         # keep a log
+vail-cli -T >> band.log                      # keep a log and watch the full-screen view
+vail-cli --json | jq -r .text                # JSON Lines, with SNR and speed
 vail-cli recording.wav                       # decode a recording (WAV, FLAC, MP3)
-rtl_fm -M usb -f 7.03M -s 8k | vail-cli -    # raw 16-bit 8 kHz mono from any program
+vail-cli --plain                             # lines on the terminal, as for a screen reader
+
+arecord -t raw -f S16_LE -r 48000 | vail-cli -R 48000 -      # raw samples from any program
+rtl_fm -M usb -f 7.03M -s 8k | vail-cli -                    # 8 kHz, 16-bit mono is the default
 ```
 
 ## Use
 
 ```
-usage: vail-cli [options] [file]
+usage: vail-cli [options] [FILE]
 
-  -l, --list         list the sound input devices and exit
-  -d, --device DEV   use this device: its number in the list, or part of its name
-  -b, --band LO-HI   only decode signals between LO and HI Hz (default: 200-3900)
-  -r, --record FILE  also record the audio to a WAV file (8 kHz, for replaying later)
-  -h, --help         show this help and exit
-  -V, --version      show the version and exit
+Input:
+  -l, --list            list the sound input devices and exit
+  -d, --device DEV      use this device: its number in the list, or part of its name
+  -c, --channel N       decode only this channel of the input (1 left, 2 right; default: mix them)
+  -b, --band LO-HI      only decode signals between LO and HI Hz (default: 200-3900)
+  -s, --seconds N       stop after N seconds of audio
+  -r, --record FILE     also record the audio to a WAV file (8 kHz, for replaying later)
+
+Raw samples on stdin, always little-endian:
+  -R, --rate HZ         samples per second (default: 8000)
+  -F, --format FMT      s16 or f32 (default: s16)
+  -n, --channels N      interleaved channels (default: 1)
+
+Output:
+  -T, --view            full-screen view, on the terminal whatever stdout is
+  -p, --plain           finished lines of text only, as on a pipe
+  -j, --json            finished lines as JSON Lines, with SNR and speed
+  -a, --all             also show text that does not read like Morse, such as decoded speech
+
+  -h, --help            show this help and exit
+  -V, --version         show the version and exit
 ```
 
-There is nothing to configure. With no options it listens to the system's default input. Set the rig to a
-wide filter to see the whole passband, and keep the input level out of clipping: vail-cli tells you if it
-isn't. Both channels of a stereo input are mixed, so dual-receiver rigs decode both receivers.
+There is nothing to configure. With no options it listens to the system's default input. Set the rig to a wide filter to see
+the whole passband, and keep the input level out of clipping: vail-cli tells you if it isn't. Both channels of a stereo input
+are mixed unless `--channel` picks one, so dual-receiver rigs decode both receivers.
 
-Text can be revised as the decoder learns more, so a line is printed only once it is final: when a signal has
-been quiet for 4 seconds, or as soon as 60 characters are beyond the decoder's reach. Lower-case letters are
-prosigns (`ar`, `sk`, `bk`, ...).
+Keys in the view: `q` quits, `c` clears the log, the arrows, `PgUp`, `PgDn`, `Home` and `End` scroll it, and `?` shows help. The
+SNR column is the engine's own estimate, in its narrow bandwidth, so it reads higher than an SNR in 2500 Hz.
 
-Exit status is 0 on success, on Ctrl+C, or when whatever was reading the output goes away, as in `vail-cli | head`. It is
-1 on a runtime error such as a missing device, a device that stops, or output that cannot be written, and 2 on a usage
-error. If a recording cannot be written, that is reported at once, decoding goes on without it, and the status is 1.
+Text can be revised as the decoder learns more, so a line is printed only once it is final: when a signal has been quiet for 4
+seconds, or as soon as 60 characters are beyond the decoder's reach. Each line is the time the text started (UTC, or from the
+start of a file or stream), the pitch in Hz, and the text. Prosigns are written `<AR>`, `<SK>`, `<BK>`.
+
+If `vail-cli -` is left with nothing on stdin, or its stream goes quiet, Ctrl+C and the view's keys still work.
+
+Exit status is 0 on success, on Ctrl+C, or when whatever was reading the output goes away, as in `vail-cli | head`. It is 1 on a
+runtime error such as a missing device, a device that stops, output that cannot be written, or `--view` with no terminal to
+use, and 2 on a usage error. If a recording cannot be written, that is reported at once, decoding goes on without it, and the
+status is 1.
+
+## Text that is not Morse
+
+The decoder reads anything that keys on and off as Morse, and it gives no measure of how well it fits. Speech and music come out
+as many short pieces such as `E E  EE` and `T ETTEI`. Text that reads like that is left out, a note on stderr says how many lines
+were, and `--all` shows everything.
+
+This is judged from the text alone, so it has limits:
+
+- RTTY and other data modes still print, as random-looking letters. Real code groups look the same to a text check, and they
+  must print.
+- A very short real message of nothing but the letters E, T, I, A and N is left out, such as `T U` for a `TU` with its letters
+  split apart. Longer text is hardly affected: on 162 synthetic long messages, from 20 dB down to −12 dB and with fading, static
+  and hand keying, 2 of 10169 letters were lost. On 162 short ones, 65 of 910 were. Nothing has been measured on real
+  recordings yet.
+
+Measuring how well keying fits Morse needs the engine. What that takes is in
+[docs/engine-confidence.md](../docs/engine-confidence.md).
 
 ## Install
 
@@ -57,7 +107,7 @@ Binaries for Linux (x86_64), macOS (Apple silicon and Intel) and Windows (x86_64
 this README and the license. The macOS binaries are not signed, so one downloaded with a browser first needs
 `xattr -d com.apple.quarantine vail-cli`.
 
-To build it, only a C compiler is needed; audio libraries are found at run time.
+To build it, only a C compiler is needed; audio libraries are found at run time. ncurses is optional, for the full-screen view.
 
 ```sh
 git clone https://github.com/TheRealKamisama/vail-decoder
@@ -66,11 +116,17 @@ make
 sudo make install        # to /usr/local; or use PREFIX=...
 ```
 
-- **Linux** needs PulseAudio, PipeWire, JACK or ALSA at run time, which any desktop already has.
-- **macOS** needs the Xcode command line tools to build. The first run asks for microphone permission
-  for your terminal; without it you get silence, which vail-cli reports as `input is silent`.
-- **Windows** builds with MSYS2/MinGW (`pacman -S make mingw-w64-x86_64-gcc`, then `make`), or cross-compile
-  from anywhere: `make CC="zig cc -target x86_64-windows-gnu" TARGET=Windows`.
+`make` uses ncurses if it can find it. Without it you get everything except the view: on a terminal, finished lines with the
+signals being heard below them. `vail-cli --version` says which you have. `make NCURSES=1` fails if it is missing, and `make
+NCURSES=0` leaves it out.
+
+- **Linux** needs PulseAudio, PipeWire, JACK or ALSA at run time, which any desktop already has. For the view, install
+  `libncurses-dev` (Debian, Ubuntu), `ncurses-devel` (Fedora) or `ncurses` (Arch).
+- **macOS** needs the Xcode command line tools to build, which include ncurses. The first run asks for microphone permission for
+  your terminal; without it you get silence, which vail-cli reports as `input is silent`.
+- **Windows** builds with MSYS2/MinGW (`pacman -S make mingw-w64-x86_64-gcc mingw-w64-x86_64-ncurses`, then `make`), or
+  cross-compile from anywhere, without the view: `make CC="zig cc -target x86_64-windows-gnu" TARGET=Windows`. The view needs a
+  real console rather than a pipe-only terminal such as mintty.
 
 ## How it works
 
@@ -81,8 +137,8 @@ sound card ─ miniaudio ─ 8 kHz mono ─ FFT ─┬─ slice 1 ─ vail engin
                                            └─ slice 5 ─ vail engine ─┘
 ```
 
-That is all of it: `src/audio.c` gets samples, `src/band.c` turns them into lines, `src/main.c` is the
-command line and the terminal.
+In `src/`: `audio.c` gets samples, `band.c` turns them into lines, `text.c` tidies them and judges them, `output.c` writes stdout,
+`view.c` is the full-screen view, `options.c` is the command line, and `main.c` runs it all.
 
 - **One engine sees 1 kHz, so five share the band.** vail decodes 128 bins of a 1024-point FFT. Instead of
   mixing audio down five times, one FFT is run and overlapping slices of its spectrum go to five unmodified
@@ -97,12 +153,17 @@ command line and the terminal.
 ## Test
 
 ```sh
-make test                  # known stations in, text and ghosts scored
+make test                  # known stations in, text and ghosts scored; the view on a pseudo-terminal
 python3 tests/e2e.py --table   # the same, showing every station's text and every ghost
+python3 ../tools/notmorse.py   # speech, music and data modes in, what prints and what real text is lost
 ```
 
 Test audio is synthesised with the engine's own generator, covering noise, stations from 250 to 3400 Hz, up to
 ten at once, the slice overlaps, a receiver's filter, clipping, long messages, and file, device and write errors.
+
+No automatic test opens a sound card. Live capture has been tried on Linux through ALSA, with samples supplied by a test, so it has
+not met real hardware, nor macOS or Windows. The view's tests run on Linux and macOS, on a pseudo-terminal; on Windows, the view is
+only compiled.
 
 ## Known limits
 
