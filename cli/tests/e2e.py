@@ -545,8 +545,11 @@ def check_json():
     if [x["text"] for x in rows] != [l[2] for l in lines] or [x["frequency"] for x in rows] != [l[1] for l in lines]:
         problems.append("differs from the lines: %r" % rows[:2])
     for x in rows:
-        if not (isinstance(x["time"], float) and isinstance(x["channel"], int) and 5 <= x["wpm"] <= 80 and "snr" in x):
+        if not (isinstance(x["time"], float) and isinstance(x["channel"], int) and 5 <= x["wpm"] <= 80 and "snr" in x
+                and isinstance(x.get("score"), (int, float))):
             problems.append("fields: %r" % x)
+        elif x["score"] < 1.0:
+            problems.append("printed with a Morse score under the threshold: %r" % x)
         if "utc" in x:
             problems.append("a file has no time of day: %r" % x)
     return problems or ([] if rows else ["no rows"])

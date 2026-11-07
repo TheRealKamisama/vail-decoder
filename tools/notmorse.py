@@ -146,6 +146,8 @@ NOT_MORSE = ("speech", "ssb-speech", "music", "rtty", "on-off data", "pumped noi
 
 def decode(cli, path, *args):
     r = subprocess.run([cli, *args, path], capture_output=True, text=True)
+    if r.returncode:
+        sys.exit("%s: %s" % (path, r.stderr.strip()))
     return [m[1] for m in (re.match(r"^\S+ +\d+  (.*)$", line) for line in r.stdout.splitlines()) if m]
 
 

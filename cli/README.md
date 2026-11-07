@@ -28,7 +28,7 @@ Send stdout anywhere else and it is finished lines of text, always clean:
 vail-cli | grep --line-buffered K1ABC        # watch for a callsign
 vail-cli >> band.log                         # keep a log
 vail-cli -T >> band.log                      # keep a log and watch the full-screen view
-vail-cli --json | jq -r .text                # JSON Lines, with SNR and speed
+vail-cli --json | jq -r .text                # JSON Lines, with SNR, speed and Morse score
 vail-cli recording.wav                       # decode a recording (WAV, FLAC, MP3)
 vail-cli --plain                             # lines on the terminal, as for a screen reader
 
@@ -57,8 +57,8 @@ Raw samples on stdin, always little-endian:
 Output:
   -T, --view            full-screen view, on the terminal whatever stdout is
   -p, --plain           finished lines of text only, as on a pipe
-  -j, --json            finished lines as JSON Lines, with SNR and speed
-  -a, --all             also show text that does not read like Morse, such as decoded speech
+  -j, --json            finished lines as JSON Lines, with SNR, speed and Morse score
+  -a, --all             also show text whose keying does not fit Morse, such as speech or RTTY
 
   -h, --help            show this help and exit
   -V, --version         show the version and exit
@@ -84,21 +84,28 @@ status is 1.
 
 ## Text that is not Morse
 
-The decoder reads anything that keys on and off as Morse, and it gives no measure of how well it fits. Speech and music come out
-as many short pieces such as `E E  EE` and `T ETTEI`. Text that reads like that is left out, a note on stderr says how many lines
-were, and `--all` shows everything.
+The decoder reads anything that keys on and off as Morse, so speech, music and data modes such as RTTY come out as letters: many
+short pieces such as `E E  EE`, or random-looking text. The engine also scores each signal's keying, by how much better Morse
+timing explains it (dashes three dots long, letter gaps of three and word gaps of seven) than the best explanation that is not
+Morse. A line is printed only if its keying scores at least 1, either as the line is finished or on average while its text came
+in, and the full-screen view lists a signal only while its text scores that well, which takes a second or two of Morse. A note
+on stderr says how many lines were left out, `--all` shows everything, and `--json` gives each line's score.
 
-This is judged from the text alone, so it has limits:
+On 26 recordings with no Morse in them, from RTTY, FT8 and PSK31 to SSB, a crowded room and a piano, 55 of 46985 characters
+were printed. On synthetic audio, 3 minutes of each:
 
-- RTTY and other data modes still print, as random-looking letters. Real code groups look the same to a text check, and they
-  must print.
-- A very short real message of nothing but the letters E, T, I, A and N is left out, such as `T U` for a `TU` with its letters
-  split apart. Longer text is hardly affected: on 162 synthetic long messages, from 20 dB down to −12 dB and with fading, static
-  and hand keying, 2 of 10169 letters were lost. On 162 short ones, 65 of 910 were. Nothing has been measured on real
-  recordings yet.
+| | Characters with `--all` | Printed |
+| --- | ---: | ---: |
+| Speech, SSB speech, music, RTTY, on-off data, noise | 18293 | 10 |
+| Morse, 162 long messages, from 20 dB down to −12 dB, with fading, static and hand keying | 10169 | 10167 |
+| Morse, 162 short messages such as `TU` and `R 73` | 910 | 861 |
 
-Measuring how well keying fits Morse needs the engine. What that takes is in
-[docs/engine-confidence.md](../docs/engine-confidence.md).
+The score judges timing, so:
+
+- A message of only a second or two can be over before it scores 1, most often at −6 dB and below.
+- Keying far from the standard timing, such as a fast contest station that clips its spacing, can score low and be left out.
+
+How the score works, and what it was measured on, is in [docs/engine-confidence.md](../docs/engine-confidence.md).
 
 ## Install
 

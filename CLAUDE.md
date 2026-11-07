@@ -19,7 +19,7 @@ host may lack a system compiler; any C99 compiler works via `CC`, e.g. `CC="zig 
 ./build.sh                                   # build/vail_decode, build/cwgen, build/test_conformance
 ./build/test_conformance                     # 13-conformance vectors, primitive cross-checks, unit tests
 ./build/cwgen -o x.wav -t "CQ DE K1ABC" -w 25 -f 700 -n 3    # synthetic Morse; options in its header comment
-./build/vail_decode [-a] [-m] [-s] [-v] [-T trace.txt] [-E elems.txt] x.wav # decode a WAV (any rate, 16-bit)
+./build/vail_decode [-a [-c]] [-m] [-s] [-v] [-T trace.txt] [-E elems.txt] x.wav # decode a WAV (any rate, 16-bit); -c: Morse scores
 python3 tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show]   # CER over the original grid
 python3 tools/weak.py [--full] [--builds A,B] [--snr ..] [--cond ..] [--show]   # weak-signal grid
 python3 tools/elemcheck.py [--build DIR] [--snr -10,-12] [--cond clean]  # element errors vs ground truth
@@ -40,7 +40,7 @@ Weak-signal work is measured with `tools/weak.py --builds build,build/v_NAME` (1
 `--full` 4200): builds are compared on identical audio, and the summary gives the SNR at 10 % and
 25 % CER; differences under ~0.3 % in its mean are noise. `vail_decode -T` writes a per-frame trace of
 every channel (bin, floor, amplitude, SNR estimate, LLR, keyProb, carrier, noise references,
-log-odds, emitted elements, STA means, CVD characters).
+log-odds, emitted elements, STA means, CVD characters, and every 25 frames the Morse evidence as `morse=`).
 
 ## The engine and `cli/`
 
@@ -51,8 +51,9 @@ know about `cli/`. `cli/` depends on the engine and has its own `Makefile`, `tes
 behaviour is measured with `tools/eval.py` and `tools/weak.py`; `cli/tests/e2e.py` only guards the product.
 
 ncurses is optional for `cli/` (`view.c` compiles to stubs without it), and everything but the full-screen view must work
-without it. The engine gives no measure of whether a channel is Morse at all, so `cli/src/text.c` judges from the text; what
-the engine would need for this is in `docs/engine-confidence.md`.
+without it. Whether a channel is Morse at all is the engine's to say (`vail_channel_confidence`, `docs/engine-confidence.md`):
+`cli/src/band.c` leaves out a line whose keying scores below `MIN_SCORE` (`line_score`: the score as the line prints, or its
+mean while the line's text came in), and `--all` shows it.
 
 ## Versions and releases
 
@@ -120,6 +121,9 @@ FE → BCM → for each channel: SIG{ SPM → ENV → SEG ⇄ STA (⇄ SPD) → 
 `LIK_TUNE_OWN_NOISE` and `BCM_TUNE_KEEP_ON_SWITCH` (close stations, `docs/close-signals.md`). SEG's input
   is `SegObs` (log-odds of key-down, rising and falling edge frames); with `ENV_TUNE_LIK=0` it is the
   reference keyProb as log-odds.
+- `SPD_TUNE_MORSE` (on by default) only reports: on the same `SegObs`, `SPD` also runs the standard timing at STA's
+  speed and models of keying that is not Morse, and the leaky log-likelihood margin between them is
+  `vail_channel_confidence`. Decoding must not depend on it: `vail_decode` output is byte-identical with it off.
 
 ## Code layout
 

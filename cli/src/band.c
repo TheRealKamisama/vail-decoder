@@ -33,14 +33,22 @@
 #define TEXT_CAP     (3 * MSG_CAPACITY + 8) /* a character renders to at most 3 bytes */
 #define TWIN_BINS    2                      /* 16 Hz: in an overlap of slices, two engines hear one signal this close */
 
+/* A line is shown when the engine's confidence that its keying is Morse (a log-odds) is at least this, either as the line
+ * prints or on average while its text came in (line_score). */
+#define MIN_SCORE    1.0f
+
 /* The engine forgets a channel's text when the channel retires, so each one is followed here. */
 typedef struct {
     int id, engine, bin;                    /* bin: in the FFT, so comparable between engines */
     int snr, wpm, state;
+    float score;                            /* the engine's confidence that this is Morse, a log-odds */
+    float scoreSum;                         /* the score summed over the frames since the unprinted text began, */
+    int scoreFrames;                        /* ... and those frames */
     int hidden;                             /* not shown: outside the band, or not a station */
     int passed;                             /* checks passed; at CHECKS_TO_PASS it is a station */
     int seen;
     int len;
+    int chars;                              /* characters in the text, spaces not counted */
     int printed;                            /* characters already printed, spaces not counted */
     long dropped;                           /* the engine's count when the text was last taken */
     long changed;                         /* frame of the last change to the text */
@@ -122,6 +130,15 @@ static int has_older_twin(const band *b, const track *t)
     return 0;
 }
 
+/* How far the unprinted text's keying is Morse: the score now, or its mean while that text came in, whichever is higher.
+ * The mean keeps a line whose station was followed by other keying before the line printed; the score now keeps a
+ * short message, during which the score is still rising. */
+static float line_score(const track *t)
+{
+    float mean = t->scoreFrames ? t->scoreSum / t->scoreFrames : t->score;
+    return mean > t->score ? mean : t->score;
+}
+
 /* Prints up to LINE_CHARS characters of the unprinted text, ending at the end of a word if it can. */
 static void print_line(band *b, track *t)
 {
@@ -135,7 +152,7 @@ static void print_line(band *b, track *t)
     }
     for (end = to; end > from && t->text[end - 1] == ' '; end--) {}
     if (is_station(t) && end > from && !has_older_twin(b, t)) {
-        if (b->showAll || text_looks_like_morse(t->text, end)) {
+        if (b->showAll || line_score(t) >= MIN_SCORE) {
             band_line out;
             text_tidy(t->text + from, end - from, line);
             out.frame = t->started;
@@ -143,6 +160,7 @@ static void print_line(band *b, track *t)
             out.hz = bin_hz(t->bin);
             out.snr = t->snr;
             out.wpm = t->wpm;
+            out.score = line_score(t);
             out.text = line;
             b->onLine(b->ctx, &out);
         } else {
@@ -151,6 +169,8 @@ static void print_line(band *b, track *t)
     }
     t->printed += count_chars(t->text + from, to - from);
     t->started = b->frame;
+    t->scoreSum = 0.0f;
+    t->scoreFrames = 0;
 }
 
 static void print_all(band *b, track *t)
@@ -169,6 +189,7 @@ static void track_update(band *b, track *t, const char *text, int len, long drop
     if (t->printed >= count_chars(t->text, t->len) - gone) t->started = b->frame;   /* new text */
     memcpy(t->text, text, (size_t)len + 1);
     t->len = len;
+    t->chars = count_chars(text, len);
     t->changed = b->frame;
 }
 
@@ -228,7 +249,12 @@ static void poll_channels(band *b)
             t->bin = bin;
             t->seen = 1;
             vail_channel_stats(b->engine[e], i, &t->snr, &t->wpm, &t->state);
+            vail_channel_confidence(b->engine[e], i, &t->score);
             track_update(b, t, text, len, vail_channel_dropped(b->engine[e], i));
+            if (t->printed < t->chars) {
+                t->scoreSum += t->score;
+                t->scoreFrames++;
+            }
         }
     }
 }
@@ -367,7 +393,7 @@ int band_signals(const band *b, band_signal *out, int max, int unprintedOnly)
         band_signal s;
         int j, from = 0, len;
         if (!is_station(t) || has_older_twin(b, t)) continue;
-        if (!b->showAll && !text_looks_like_morse(t->text, t->len)) continue;
+        if (!b->showAll && line_score(t) < MIN_SCORE) continue;
         if (unprintedOnly) {
             if (t->printed >= count_chars(t->text, t->len)) continue;
             from = offset_of_char(t->text, t->len, t->printed);
@@ -377,6 +403,7 @@ int band_signals(const band *b, band_signal *out, int max, int unprintedOnly)
         s.hz = bin_hz(t->bin);
         s.snr = t->snr;
         s.wpm = t->wpm;
+        s.score = line_score(t);
         s.decoding = t->state == API_STATE_DECODING || t->state == API_STATE_LOCKED_DECODING;
         memcpy(s.text, text, strlen(text) + 1);
         for (j = n++; j > 0 && out[j - 1].hz > s.hz; j--) out[j] = out[j - 1];

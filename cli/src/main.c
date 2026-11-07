@@ -350,7 +350,7 @@ static int run(const options *o)
     lost = audio_lost_samples(s.audio);
     if (lost > 0) report("decoding fell behind: lost %.1f s of audio", lost / (double)VAIL_SAMPLE_RATE);
     if (band_hidden_lines(s.band) > 0)
-        report("left out %ld lines that did not read like Morse; --all shows them", band_hidden_lines(s.band));
+        report("left out %ld lines whose keying did not fit Morse; --all shows them", band_hidden_lines(s.band));
 
     band_free(s.band);
     if (!audio_rec_close(s.rec)) status = 1;

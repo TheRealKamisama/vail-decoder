@@ -70,6 +70,13 @@ long vail_channel_dropped(const vail_api *h, int idx);
 /* That channel's numbers, as API_Snr, API_Wpm and API_State give them for the current channel. Returns 0 if there is
  * no such channel. Any pointer may be NULL. */
 int vail_channel_stats(const vail_api *h, int idx, int *snrDb, int *wpm, int *state);
+/* How far that channel's keying is Morse, as a log-odds in nats: how much better Morse timing (dashes and letter gaps of
+ * three dots, word gaps of seven) explains its recent marks and gaps than the best keying that is not Morse, which is the
+ * same rhythm with no such structure, or random bits. It starts at 0 with the channel, moves only while the channel has a
+ * carrier, and forgets over about 10 s of that, so it follows a change of sender. Morse passes 1 within a second or two
+ * of keying and 10 within a few seconds; speech, music, RTTY and other data seldom reach 1. Decoding does not depend on
+ * it. It is 0 in a build without SPD_TUNE_MORSE. Returns 0 if there is no such channel; evidence may be NULL. */
+int vail_channel_confidence(const vail_api *h, int idx, float *evidence);
 
 #ifdef __cplusplus
 }

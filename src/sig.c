@@ -20,7 +20,7 @@ void sig_init(Sig *s, int bin)
     sta_init(&s->sta);
     seg_init(&s->seg, &s->sta);
     spd_init(&s->spd);
-    spd_set_current(&s->spd, s->seg.durState);
+    spd_set_current(&s->spd, s->seg.durState, &s->sta);
     s->cvd = malloc(sizeof(Cvd));
     cvd_init(s->cvd);
     cvd_set_model(s->cvd, &s->sta);
@@ -53,19 +53,19 @@ static void cvd_collect(Sig *s)
 }
 
 /* SPD: when a fixed-timing model at another speed explains the recent frames better than SEG's current
- * one by SPD_SNAP_MARGIN, STA restarts from that speed */
+ * one by SPD_SNAP_MARGIN, STA restarts from that speed. The scores also give the Morse evidence (SPD_TUNE_MORSE). */
 static void speed_check(Sig *s)
 {
     int kb, kRef;
     spd_update(&s->spd, &s->env.envObs);
-    if (s->spd.hold > 0) return;
+    if (!SPD_TUNE || s->spd.hold > 0) return;
     kb = spd_best(&s->spd);
     kRef = spd_index_of(&s->spd, sta_speed(&s->sta));
     if (abs(kb - kRef) >= SPD_SNAP_STEPS && s->spd.score[kb] - s->spd.score[SPD_CUR] > SPD_SNAP_MARGIN) {
         spd_means(&s->spd, kb, s->sta.means);
         sta_reset(&s->sta);
         seg_build_duration_tables(&s->seg);
-        spd_set_current(&s->spd, s->seg.durState);
+        spd_set_current(&s->spd, s->seg.durState, &s->sta);
         if (CVD_TUNE) cvd_set_model(s->cvd, &s->sta);
         s->spd.score[SPD_CUR] = s->spd.score[kb];
         s->spd.hold = SPD_HOLD;
@@ -172,6 +172,10 @@ static void hist_append(Sig *s, const Char *c, int n)
     }
 }
 
+#ifndef SPD_TRACE_PERIOD
+#define SPD_TRACE_PERIOD 25                                 /* frames between two traces of the Morse evidence */
+#endif
+
 static void trace_frame(const Sig *s, const Element *out, int nout, int carrier)
 {
     int i;
@@ -191,6 +195,12 @@ static void trace_frame(const Sig *s, const Element *out, int nout, int carrier)
         int kb = spd_best(&s->spd);
         fprintf(vail_trace, " spd=%.1f/%.1f m=%.1f", s->spd.wpm[kb], sta_speed(&s->sta),
                 s->spd.score[kb] - s->spd.score[SPD_CUR]);
+    }
+    if (SPD_TUNE_MORSE && s->seg.stepCounter % SPD_TRACE_PERIOD == 0) {
+        int k, bm = 0, bn = 0;
+        for (k = 1; k <= SPD_STD; k++) if (s->spd.morseLik[k] > s->spd.morseLik[bm]) bm = k;
+        for (k = 1; k < SPD_NULLS; k++) if (s->spd.nullLik[k] > s->spd.nullLik[bn]) bn = k;
+        fprintf(vail_trace, " morse=%.1f k%d/n%d std=%.1f", spd_morse_evidence(&s->spd), bm, bn, s->spd.stdWpm);
     }
     for (i = 0; i < nout; i++) fprintf(vail_trace, " [%d k%d]", out[i].durationSigned, out[i].kind);
     for (i = 0; i < s->chr.charCount; i++) fprintf(vail_trace, " '%c'", s->chr.chars[i].charCode);
@@ -225,7 +235,7 @@ void sig_process_frame(Sig *s, const float *spectrum, const float *peakRatio, fl
     }
 
     carrier = s->env.envCarrier;
-    if (SPD_TUNE && carrier) speed_check(s);
+    if ((SPD_TUNE || SPD_TUNE_MORSE) && carrier) speed_check(s);
     drop = (s->prevCarrier && !carrier) || s->flushRequest;
     s->flushRequest = 0;
     s->prevCarrier = carrier;
@@ -250,7 +260,7 @@ void sig_process_frame(Sig *s, const float *spectrum, const float *peakRatio, fl
         if (drop) sta_reset(&s->sta);
         if (s->sta.modelDirty) {
             seg_build_duration_tables(&s->seg);
-            spd_set_current(&s->spd, s->seg.durState);
+            spd_set_current(&s->spd, s->seg.durState, &s->sta);
             if (CVD_TUNE) cvd_set_model(s->cvd, &s->sta);
         }
         if (flushed) { chr_clear_history(&s->chr); s->histCount = 0; }

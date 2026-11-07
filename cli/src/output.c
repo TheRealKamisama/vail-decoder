@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -105,7 +106,8 @@ void output_text(const char *stamp, int hz, const char *text)
     printf("%s %5d  %s\n", stamp, hz, text);
 }
 
-/* The field names are those of libmorsedec's JSON Lines, as far as they mean the same. */
+/* The field names are those of libmorsedec's JSON Lines, as far as they mean the same. The score is rounded down, so that
+ * "score" >= 1 picks the lines that are shown without --all. */
 static void put_json(const band_line *line, long nowFrame)
 {
     const unsigned char *p;
@@ -118,7 +120,8 @@ static void put_json(const band_line *line, long nowFrame)
                    tm->tm_hour, tm->tm_min, tm->tm_sec);
         }
     }
-    printf("\"channel\":%d,\"frequency\":%d,\"snr\":%d,\"wpm\":%d,\"text\":\"", line->channel, line->hz, line->snr, line->wpm);
+    printf("\"channel\":%d,\"frequency\":%d,\"snr\":%d,\"wpm\":%d,\"score\":%.1f,\"text\":\"", line->channel, line->hz,
+           line->snr, line->wpm, floor(line->score * 10.0) / 10.0);
     for (p = (const unsigned char *)line->text; *p; p++) {
         if (*p == '"' || *p == '\\') printf("\\%c", *p);
         else if (*p < 32 || *p >= 127) printf("\\u%04x", *p);

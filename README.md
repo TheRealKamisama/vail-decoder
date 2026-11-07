@@ -104,7 +104,9 @@ vail_fe_free(fe);
 There are also queries for state, pitch, SNR, WPM and channel count (`API_State`, `API_Pitch`,
 `API_Snr`, `API_Wpm`, `API_ChannelCount`). `API_PitchLock(h, hz)` locks the pitch. Full text is
 available with `vail_current_text` and `vail_channel_text`, and `vail_channel_dropped` says how
-much of a channel's text a full message has dropped from its front. See `src/vail.h`.
+much of a channel's text a full message has dropped from its front. `vail_channel_confidence` says
+how far a channel's keying is Morse, as a log-odds, so that a host can leave out speech, music and
+data modes ([docs/engine-confidence.md](docs/engine-confidence.md)). See `src/vail.h`.
 
 ## Architecture
 
@@ -121,7 +123,7 @@ FE → BCM → for each channel: SIG { SPM → ENV → SEG ⇄ STA (⇄ SPD) →
 | `bcm.c` | band manager: peak map, noise floor, channel creation, merging, retirement, selection |
 | `sigext.c` | spectrum matching, and the likelihood keying detector (noise, SNR, per-frame log-odds) |
 | `seg.c`, `sta.c` | duration HMM segmentation and adaptive five-class timing model |
-| `spd.c` | speed bank: fixed-speed duration models that catch a timing estimate that lost track |
+| `spd.c` | speed bank: fixed-speed duration models that catch a timing estimate that lost track; the Morse score, against models of keying that is not Morse |
 | `cvd.c`, `lm_table.h` | character Viterbi decoder over the code table, character trigram (`tools/lmgen.py`) |
 | `chr.c`, `wrd.c` | code table (and the reference element-to-character decoder), word-boundary Viterbi |
 | `msg.c`, `api.c` | bounded, revisable messages and the host interface |

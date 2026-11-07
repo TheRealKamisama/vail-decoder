@@ -11,6 +11,7 @@
  *     -E F   write every classified element of every channel to file F (id frame duration kind bin)
  *     -m     operating mode on: emulate a host that applies API_DeleteCount before appending,
  *            and print the resulting host text
+ *     -c     with -a, also print each channel's Morse evidence (vail_channel_confidence): the last and the highest
  */
 #include <math.h>
 #include <stdio.h>
@@ -37,7 +38,7 @@ static int16_t *resample(const int16_t *in, long n, int rate, long *outN)
 
 int main(int argc, char **argv)
 {
-    int all = 0, stream = 0, verbose = 0, lockHz = 0, mode = 0, rate, i, frame = 0, hostLen = 0;
+    int all = 0, stream = 0, verbose = 0, lockHz = 0, mode = 0, conf = 0, rate, i, frame = 0, hostLen = 0;
     static char host[1 << 16];
     const char *path = NULL;
     long n, pos;
@@ -46,7 +47,7 @@ int main(int argc, char **argv)
     vail_api *h;
     static char text[4096];
     enum { MAXCH = 256 };
-    static struct { int id, hz; char *text; } seen[MAXCH];
+    static struct { int id, hz; char *text; float conf, peak; } seen[MAXCH];
     int nseen = 0;
 
     for (i = 1; i < argc; i++) {
@@ -54,6 +55,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-s")) stream = 1;
         else if (!strcmp(argv[i], "-v")) verbose = 1;
         else if (!strcmp(argv[i], "-m")) mode = 1;
+        else if (!strcmp(argv[i], "-c")) conf = 1;
         else if (!strcmp(argv[i], "-p") && i + 1 < argc) lockHz = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-T") && i + 1 < argc) vail_trace = fopen(argv[++i], "w");
         else if (!strcmp(argv[i], "-E") && i + 1 < argc) vail_elems = fopen(argv[++i], "w");
@@ -98,8 +100,13 @@ int main(int argc, char **argv)
                 int hz, id, len = vail_channel_text(h, c, text, sizeof text, &hz, &id);
                 if (len <= 0) continue;
                 for (k = 0; k < nseen && seen[k].id != id; k++) {}
-                if (k == nseen) { if (nseen == MAXCH) continue; seen[nseen].id = id; seen[nseen].text = NULL; nseen++; }
+                if (k == nseen) {
+                    if (nseen == MAXCH) continue;
+                    seen[nseen].id = id; seen[nseen].text = NULL; seen[nseen].peak = -1e30f; nseen++;
+                }
                 seen[k].hz = hz;
+                vail_channel_confidence(h, c, &seen[k].conf);
+                if (seen[k].conf > seen[k].peak) seen[k].peak = seen[k].conf;
                 free(seen[k].text);
                 seen[k].text = strdup(text);
             }
@@ -118,7 +125,8 @@ int main(int argc, char **argv)
     if (all) {
         int c;
         for (c = 0; c < nseen; c++) {
-            printf("%5d Hz: %s\n", seen[c].hz, seen[c].text);
+            if (conf) printf("%5d Hz %+8.1f %+8.1f: %s\n", seen[c].hz, seen[c].conf, seen[c].peak, seen[c].text);
+            else printf("%5d Hz: %s\n", seen[c].hz, seen[c].text);
             free(seen[c].text);
         }
     } else if (!stream && !mode) {

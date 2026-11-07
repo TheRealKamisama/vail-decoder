@@ -56,7 +56,7 @@ static const char *const HELP[] = {
     "?                  this help",
     "",
     "SNR is the engine's estimate in dB, in its own narrow bandwidth. WPM is the sender's speed.",
-    "A signal is listed once it has text that reads like Morse, which takes a few seconds of keying.",
+    "A signal is listed once its keying fits Morse, which takes a few seconds of it.",
     "Each finished line is final; the text beside a signal can still change.",
     "Lines also go to stdout if it is a file or a pipe, as in: vail-cli -T >> band.log",
     "",

@@ -228,6 +228,13 @@ long vail_channel_dropped(const vail_api *h, int idx)
     return h->bcm.channels[idx]->msgA->dropped;
 }
 
+int vail_channel_confidence(const vail_api *h, int idx, float *evidence)
+{
+    if (idx < 0 || idx >= h->bcm.nChannels) return 0;
+    if (evidence) *evidence = SPD_TUNE_MORSE ? spd_morse_evidence(&h->bcm.channels[idx]->pipeline->spd) : 0.0f;
+    return 1;
+}
+
 int vail_channel_stats(const vail_api *h, int idx, int *snrDb, int *wpm, int *state)
 {
     const Channel *c;

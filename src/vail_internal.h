@@ -340,21 +340,70 @@ int sta_flush_priming(Sta *s, Element **out);
 
 #define SPD_CUR         SPD_N      /* the extra model: SEG's current (STA-adapted) tables */
 
+/* tuning: the speed bank also measures how far a channel's keying is Morse, and only reports it (vail_channel_confidence).
+ * The Morse models are the fixed-speed ones and one more at STA's speed, all with the standard timing: STA's own model
+ * adapts its ratios to anything it is given, so it is no test of them. Against them runs a bank of null models over a wider
+ * range of speeds, each with the mean and spread of log mark length, and of log gap length, of the standard timing at its
+ * speed but a single broad mode: that rhythm without the 1:3 marks and 1:3:7 gaps. Every model sees the same per-frame
+ * evidence, so only the timing is compared. The evidence is the leaky log-likelihood of the best Morse model less that of
+ * the best null model, over about SPD_MORSE_TAU frames of carrier; 0 leaves it out */
+#ifndef SPD_TUNE_MORSE
+#define SPD_TUNE_MORSE  1
+#endif
+#ifndef SPD_MORSE_TAU
+#define SPD_MORSE_TAU   1000.0     /* evidence memory, frames of carrier */
+#endif
+/* In the Morse evidence, one more model follows STA: the standard timing at STA's speed, held to the speeds Morse is sent
+ * at, since STA follows anything (it reads RTTY seen through the window as Morse at 80 WPM). Fitting STA's ratios as well,
+ * even only a weighting (marks longer by as much as gaps are shorter), lets RTTY through again. */
+#define SPD_STD         SPD_N
+#define SPD_STD_WPM_MIN 5.0
+#define SPD_STD_WPM_MAX 50.0
+#ifndef SPD_NULL_N
+#define SPD_NULL_N      13         /* null models, from SPD_NULL_WPM_MIN to SPD_NULL_WPM_MAX */
+#endif
+#define SPD_NULL_WPM_MIN 5.0
+#define SPD_NULL_WPM_MAX 80.0
+/* ... and null models of random bits: marks and gaps of at least about one bit, then ending with the even odds of
+ * each further bit, as on-off data keys, at bit periods from SPD_GEO_MIN to SPD_GEO_MAX frames */
+#ifndef SPD_GEO_N
+#define SPD_GEO_N       8
+#endif
+#define SPD_GEO_MIN     2.0
+#define SPD_GEO_MAX     24.0
+#define SPD_GEO_FLOOR   0.75       /* x the bit period: the shortest run */
+/* In the evidence models (not the speed bank, which SPD_TUNE snaps to): a length is measured to about a frame, which at
+ * speed is a large part of a dot, so the spread of log length gets (SPD_FRAME_SD / mean length)^2 more. And a run of
+ * key-down or key-up longer than any Morse element at STA's speed, a carrier or a pause, counts for neither side. */
+#define SPD_FRAME_SD    0.7        /* frames */
+#define SPD_RUN_MARK    9.0        /* units of STA's speed: a key-down counts up to this long, */
+#define SPD_RUN_GAP     21.0       /* ... a key-up up to this */
+#define SPD_NULLS       (SPD_NULL_N + SPD_GEO_N)
+
 typedef struct {
-    float hz[SPD_N + 1][SEG_ON_MAX + SEG_OFF_MAX + 1];      /* hazard (probability that the run ends) */
+    float curHz[SEG_ON_MAX + SEG_OFF_MAX + 1];              /* SPD_CUR's hazards (probability that the run ends); the
+                                                               fixed-speed models' are shared by all channels (spd.c) */
     double alpha[SPD_N + 1][SEG_ON_MAX + SEG_OFF_MAX + 1];  /* forward probabilities, normalised */
     double score[SPD_N + 1];
     float wpm[SPD_N];
     int frames, hold;
+    /* SPD_TUNE_MORSE: the model at STA's speed, the null models, and the leaky evidence of each */
+    float stdHz[SEG_ON_MAX + SEG_OFF_MAX + 1], stdWpm;
+    int runOn, runLen;                                       /* the current run, by the sign of the key log-odds */
+    double stdAlpha[SEG_ON_MAX + SEG_OFF_MAX + 1];
+    double nullAlpha[SPD_NULLS][SEG_ON_MAX + SEG_OFF_MAX + 1];
+    double morseLik[SPD_N + 1], nullLik[SPD_NULLS];
 } Spd;
 
 void spd_init(Spd *p);
-void spd_set_current(Spd *p, const DurState *segTables);
+/* SEG's current tables, and STA's model (SPD_TUNE_MORSE) */
+void spd_set_current(Spd *p, const DurState *segTables, const Sta *sta);
 void spd_update(Spd *p, const SegObs *obs);
 void spd_forget(Spd *p);                    /* clears the scores (a new over starts) */
 int spd_best(const Spd *p);                 /* index of the best fixed-speed candidate */
 int spd_index_of(const Spd *p, float wpm);
 void spd_means(const Spd *p, int k, float *means);
+float spd_morse_evidence(const Spd *p);     /* SPD_TUNE_MORSE: nats by which Morse timing explains the keying better */
 
 /* --------------------------------------------------------------- CHR (06) */
 #define CHR_TABLE_LEN          64

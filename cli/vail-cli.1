@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: GPL-3.0-or-later
-.TH VAIL-CLI 1 "2026-11-03" "vail-cli 0.1.0" "User Commands"
+.TH VAIL-CLI 1 "2026-11-07" "vail-cli 0.1.0" "User Commands"
 .SH NAME
 vail-cli \- decode every CW (Morse) signal a sound card can hear
 .SH SYNOPSIS
@@ -81,7 +81,7 @@ the input level go to standard error.
 Print finished lines as JSON Lines.
 .TP
 .BR \-a ", " \-\-all
-Also show text that does not read like Morse. See
+Also show text whose keying does not fit Morse, such as speech or RTTY. See
 .BR "TEXT THAT IS NOT MORSE" .
 .TP
 .BR \-h ", " \-\-help
@@ -150,7 +150,7 @@ each line is an object:
 .PP
 .RS
 .nf
-{"time":12.3,"utc":"2026-11-03T15:33:16Z","channel":7,"frequency":500,"snr":12,"wpm":25,"text":"CQ CQ"}
+{"time":12.3,"utc":"2026-11-03T15:33:16Z","channel":7,"frequency":500,"snr":12,"wpm":25,"score":24.6,"text":"CQ CQ"}
 .fi
 .RE
 .PP
@@ -160,15 +160,22 @@ is seconds from the start of the audio.
 is there only for a sound device. Lines with the same
 .B channel
 came from one channel of the engine.
+.B score
+is how well the line's keying fitted Morse: the larger of the channel's score as the line was finished and its mean
+while the line's text came in, rounded down to a tenth, so that the lines shown without
+.B \-\-all
+are those of 1 or more; see
+.BR "TEXT THAT IS NOT MORSE" .
 .SH TEXT THAT IS NOT MORSE
-The decoder reads anything that keys on and off as Morse, and gives no measure of how well it fits. Speech and music
-come out as many short pieces of letters such as E and T, so what reads like that is left out, and a note on standard
-error says how many lines were. This is judged from the text alone, so:
+The decoder reads anything that keys on and off as Morse, so speech, music and data modes such as RTTY come out as
+letters. The engine also scores each signal's keying, by how much better Morse timing explains it than the best
+explanation that is not Morse. A line is printed only if its keying scores at least 1, either as the line is finished or on
+average while its text came in, and the full-screen view lists a signal only while its text scores that well, which takes
+a second or two of Morse. A note on standard error says how many lines were left out. The score judges timing, so:
 .IP \(bu 2
-RTTY and other data modes, which decode to random-looking text, still print. Real text of random-looking letters, such as
-code groups, is why they must.
+A message of only a second or two can be over before it scores 1, most often when it is weak.
 .IP \(bu 2
-A very short real message of nothing but the letters E, T, I, A and N is left out.
+Keying far from the standard timing, such as a fast contest station that clips its spacing, can score low and be left out.
 .PP
 .B \-\-all
 shows everything.
