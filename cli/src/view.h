@@ -29,8 +29,9 @@ void  view_close(view *v);
 /* Handles the keys that have been pressed. Returns 1 once the user has asked to quit. */
 int   view_keys(view *v);
 
-/* Keeps a finished line for showing, and for printing with view_print_lines. */
-void  view_line(view *v, const char *stamp, int hz, const char *text);
+/* Keeps a finished line for showing, with its callsigns highlighted, and for printing with view_print_lines. types: as
+ * band_line.types, or NULL. */
+void  view_line(view *v, const char *stamp, int hz, const char *text, const unsigned char *types);
 
 void  view_draw(view *v, const band *b, const view_status *status);
 

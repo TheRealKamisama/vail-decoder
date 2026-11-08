@@ -26,11 +26,13 @@
 #define PAIR_BAR     1
 #define PAIR_ALERT   2
 #define PAIR_LIVE    3
+#define PAIR_CALL    4
 
 typedef struct {
     char stamp[STAMP_SIZE];
     int hz;
     char *text;
+    unsigned char *types;                    /* the word class of each byte of text, in the same block */
 } log_line;
 
 struct view {
@@ -58,6 +60,7 @@ static const char *const HELP[] = {
     "SNR is the engine's estimate in dB, in its own narrow bandwidth. WPM is the sender's speed.",
     "A signal is listed once its keying fits Morse, which takes a few seconds of it.",
     "Each finished line is final; the text beside a signal can still change.",
+    "Words the decoder takes for callsigns are highlighted.",
     "Lines also go to stdout if it is a file or a pipe, as in: vail-cli -T >> band.log",
     "",
     "Press any key to go back.",
@@ -116,6 +119,7 @@ view *view_open(const char *source, int loHz, int hiHz, const char **reason)
         init_pair(PAIR_BAR, COLOR_BLACK, COLOR_CYAN);
         init_pair(PAIR_ALERT, COLOR_WHITE, COLOR_RED);
         init_pair(PAIR_LIVE, COLOR_GREEN, -1);
+        init_pair(PAIR_CALL, COLOR_MAGENTA, -1);
         v->colored = 1;
     }
     snprintf(v->source, sizeof v->source, "%s", source);
@@ -166,14 +170,18 @@ static long first_shown(const view *v)
     return v->clearedAt > kept ? v->clearedAt : kept;
 }
 
-void view_line(view *v, const char *stamp, int hz, const char *text)
+void view_line(view *v, const char *stamp, int hz, const char *text, const unsigned char *types)
 {
     log_line *l = &v->log[v->total % KEEP_LINES];
-    char *copy = malloc(strlen(text) + 1);
+    size_t len = strlen(text);
+    char *copy = malloc(2 * len + 1);
     if (!copy) return;
-    strcpy(copy, text);
+    memcpy(copy, text, len + 1);
+    if (types) memcpy(copy + len + 1, types, len);
+    else memset(copy + len + 1, VAIL_WORD_GENERIC, len);
     free(l->text);
     l->text = copy;
+    l->types = (unsigned char *)copy + len + 1;
     snprintf(l->stamp, sizeof l->stamp, "%s", stamp);
     l->hz = hz;
     v->total++;
@@ -280,16 +288,35 @@ static void draw_header(const view *v, const view_status *s)
     draw_bar(v, 0, left, right);
 }
 
+/* How a callsign stands out: bold, and in its own colour where there is colour. */
+static attr_t call_attr(const view *v) { return A_BOLD | (v->colored ? COLOR_PAIR(PAIR_CALL) : 0); }
+
+/* Adds n bytes of text at the cursor in the attributes base, with the callsigns in it highlighted. */
+static void add_typed(const view *v, const char *text, const unsigned char *types, int n, attr_t base)
+{
+    int i = 0;
+    while (i < n) {
+        int call = types[i] == VAIL_WORD_CALL, j = i + 1;
+        while (j < n && (types[j] == VAIL_WORD_CALL) == call) j++;
+        attrset(call ? call_attr(v) : base);
+        addnstr(text + i, j - i);
+        i = j;
+    }
+    attrset(base);
+}
+
 /* A signal's newest text, cut to fit, with .. where text has been left out. */
-static void add_tail(int row, int col, int room, const char *text)
+static void add_tail(const view *v, int row, int col, int room, const char *text, const unsigned char *types,
+                     attr_t base)
 {
     int len = (int)strlen(text);
     if (room <= 2) return;
     if (len <= room) {
-        mvaddnstr(row, col, text, room);
+        move(row, col);
+        add_typed(v, text, types, len, base);
     } else {
         mvaddstr(row, col, "..");
-        addnstr(text + len - (room - 2), room - 2);
+        add_typed(v, text + len - (room - 2), types + len - (room - 2), room - 2, base);
     }
 }
 
@@ -320,6 +347,7 @@ static int draw_signals(view *v, const band *b, const view_status *s, int row, i
     for (i = 0; i < want; i++, row++) {
         char left[64];
         int width;
+        attr_t base;
         if (i >= shown) {
             if (i == 0 && !s->finished) {
                 attron(A_DIM);
@@ -330,12 +358,11 @@ static int draw_signals(view *v, const band *b, const view_status *s, int row, i
         }
         width = snprintf(left, sizeof left, "  %5d %4d %4d  %-6s  ", sig[i].hz, sig[i].snr, sig[i].wpm,
                          sig[i].decoding ? "decode" : "pause");
-        if (sig[i].decoding && v->colored) attron(COLOR_PAIR(PAIR_LIVE));
-        if (!sig[i].decoding) attron(A_DIM);
+        base = !sig[i].decoding ? A_DIM : v->colored ? COLOR_PAIR(PAIR_LIVE) : A_NORMAL;
+        attrset(base);
         mvaddnstr(row, 0, left, cols);
-        add_tail(row, width, cols - width, sig[i].text);
-        if (!sig[i].decoding) attroff(A_DIM);
-        if (sig[i].decoding && v->colored) attroff(COLOR_PAIR(PAIR_LIVE));
+        add_tail(v, row, width, cols - width, sig[i].text, sig[i].types, base);
+        attrset(A_NORMAL);
     }
     return row;
 }
@@ -361,9 +388,10 @@ static int rows_of(const char *text, int width)
 }
 
 /* Draws a line so that its last row is on `bottom`, leaving out whatever would go above `top`. */
-static void draw_log_line(const log_line *l, int bottom, int top, int width, int rows)
+static void draw_log_line(const view *v, const log_line *l, int bottom, int top, int width, int rows)
 {
     const char *text = l->text;
+    const unsigned char *types = l->types;
     int row = bottom - rows + 1, r;
     for (r = 0; r < rows; r++, row++) {
         int n = fit_row(text, width);
@@ -373,10 +401,12 @@ static void draw_log_line(const log_line *l, int bottom, int top, int width, int
                 snprintf(prefix, sizeof prefix, "%s %5d  ", l->stamp, l->hz);
                 mvaddnstr(row, 0, prefix, COLS);
             }
-            mvaddnstr(row, PREFIX_COLS, text, n);
+            move(row, PREFIX_COLS);
+            add_typed(v, text, types, n, A_NORMAL);
         }
         text += n;
-        while (*text == ' ') text++;
+        types += n;
+        while (*text == ' ') { text++; types++; }
     }
 }
 
@@ -403,7 +433,7 @@ static void draw_log(const view *v, int row, int rows)
     for (i = v->total - 1 - v->scroll; i >= first && bottom > row; i--) {
         const log_line *l = &v->log[i % KEEP_LINES];
         int need = rows_of(l->text, width);
-        draw_log_line(l, bottom, row + 1, width, need);
+        draw_log_line(v, l, bottom, row + 1, width, need);
         bottom -= need;
     }
 }
@@ -483,7 +513,10 @@ view *view_open(const char *source, int loHz, int hiHz, const char **reason)
 void view_close(view *v) { (void)v; }
 void view_free(view *v) { (void)v; }
 int  view_keys(view *v) { (void)v; return 0; }
-void view_line(view *v, const char *stamp, int hz, const char *text) { (void)v; (void)stamp; (void)hz; (void)text; }
+void view_line(view *v, const char *stamp, int hz, const char *text, const unsigned char *types)
+{
+    (void)v; (void)stamp; (void)hz; (void)text; (void)types;
+}
 void view_draw(view *v, const band *b, const view_status *status) { (void)v; (void)b; (void)status; }
 long view_print_lines(const view *v, void (*print)(const char *, int, const char *)) { (void)v; (void)print; return 0; }
 

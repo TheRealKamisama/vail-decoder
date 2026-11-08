@@ -56,7 +56,7 @@ void options_print_help(void)
 "Output:\n"
 "  -T, --view            full-screen view, on the terminal whatever stdout is%s\n"
 "  -p, --plain           finished lines of text only, as on a pipe\n"
-"  -j, --json            finished lines as JSON Lines, with SNR, speed and Morse score\n"
+"  -j, --json            finished lines as JSON Lines, with SNR, speed, Morse score and callsigns\n"
 "  -a, --all             also show text whose keying does not fit Morse, such as speech or RTTY\n"
 "\n"
 "  -h, --help            show this help and exit\n"

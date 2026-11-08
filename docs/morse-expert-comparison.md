@@ -16,7 +16,7 @@ below compares how well the two decode.
 | Input | the phone's microphone, or a cable from the radio | any sound input device; WAV, FLAC and MP3 files; raw samples on stdin, as from `rtl_fm` |
 | Level | a level bar, to be kept within −50 to −20 dBFS | a meter in dBFS, and an alert when the input clips or is silent |
 | Display | waterfall and text | a row per signal with SNR, speed, state and text, and a log of finished lines; no waterfall |
-| Text | two modes: General Text, and Ham Radio QSO, which does "extra processing of the decoded text to improve word segmentation and highlight the callsigns and special words" | one: `WRD` always sets word ends with templates for callsigns, reports and prosigns, and classes each word, but the classes are not shown |
+| Text | two modes: General Text, and Ham Radio QSO, which does "extra processing of the decoded text to improve word segmentation and highlight the callsigns and special words" | one: `WRD` always sets word ends with templates for callsigns, reports and prosigns, and classes each word; the view highlights callsigns, and `--json` lists them |
 | Text that is not Morse | no squelch, threshold or confidence is described | the Morse score: lines whose keying is not Morse are left out, `--all` shows them, and `--json` gives each line's score |
 | Output | select text to copy or share it, or save it to a file on the phone; a Pause Decoding button | finished lines on stdout, JSON Lines with SNR, speed and score, and a WAV recording of the session |
 | Platforms | Android, 64-bit only since 1.17 | Linux, macOS and Windows; the engine is C99 with no audio, threads or file I/O, for firmware and apps |
@@ -25,11 +25,11 @@ below compares how well the two decode.
 
 ## Ideas for vail
 
-1. **Highlight callsigns and reports,** as the Ham Radio QSO mode does. vail has the hard part: `WRD` already classes each
-   word, and `API_CharAt` gives the class with each character. But only for the current channel: `vail_channel_text`, which
-   vail-cli reads for every channel, is plain text. A per-channel call that gives characters with their word class would let
-   the view colour callsigns and reports, and `--json` list them. This is also where the callsign vocabulary belongs, which
-   did not work as a gate on text ([engine-confidence.md](engine-confidence.md#a-callsign-vocabulary)).
+1. **Highlight callsigns and reports,** as the Ham Radio QSO mode does. Done for callsigns: `WRD` already classed each word,
+   but only `API_CharAt`, for the current channel, gave the classes out. `vail_channel_chars` now gives them for every
+   channel, so vail-cli's view highlights callsigns and `--json` lists them in `callsigns`. Reports and prosign words have
+   classes too, and could be shown the same way. This is also where the callsign vocabulary belongs, which did not work as a
+   gate on text ([engine-confidence.md](engine-confidence.md#a-callsign-vocabulary)).
 2. **Follow one signal,** as a tap on Morse Expert's waterfall does. In vail-cli's view, a key could pick a signal's row and
    show only its text, at full width. `--band` already narrows the band for a pipe or a log, and the engine has
    `API_PitchLock` for its current channel.

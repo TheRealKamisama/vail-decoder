@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: GPL-3.0-or-later
-.TH VAIL-CLI 1 "2026-11-07" "vail-cli 0.1.0" "User Commands"
+.TH VAIL-CLI 1 "2026-11-09" "vail-cli 0.1.0" "User Commands"
 .SH NAME
 vail-cli \- decode every CW (Morse) signal a sound card can hear
 .SH SYNOPSIS
@@ -101,7 +101,7 @@ Single letters without values may be run together, as in
 The top line gives the source, the band, the time and the input level. Below it, each signal has a row with its pitch, the
 engine's estimate of its SNR in dB, in the engine's own narrow bandwidth, its speed in WPM, whether it is decoding or has
 paused, and its newest text, which can still change. Below those is the log of finished lines, and warnings are at the
-bottom.
+bottom. Words the decoder takes for callsigns are highlighted, in bold magenta.
 .TP
 .BR q ", " Ctrl+C
 Quit.
@@ -125,7 +125,7 @@ If standard output is that terminal, the finished lines are printed when the vie
 audio ends by itself, the view stays until you quit.
 .PP
 .B NO_COLOR
-in the environment turns colour off.
+in the environment turns colour off; callsigns are then bold.
 .SH OUTPUT
 Standard output carries one line for each finished piece of text:
 .PP
@@ -150,7 +150,7 @@ each line is an object:
 .PP
 .RS
 .nf
-{"time":12.3,"utc":"2026-11-03T15:33:16Z","channel":7,"frequency":500,"snr":12,"wpm":25,"score":24.6,"text":"CQ CQ"}
+{"time":12.3,"utc":"2026-11-03T15:33:16Z","channel":7,"frequency":500,"snr":12,"wpm":25,"score":24.6,"text":"DE K1ABC","callsigns":["K1ABC"]}
 .fi
 .RE
 .PP
@@ -166,6 +166,8 @@ while the line's text came in, rounded down to a tenth, so that the lines shown 
 .B \-\-all
 are those of 1 or more; see
 .BR "TEXT THAT IS NOT MORSE" .
+.B callsigns
+lists the words of the text that the decoder takes for callsigns, each once, in the order they came.
 .SH TEXT THAT IS NOT MORSE
 The decoder reads anything that keys on and off as Morse, so speech, music and data modes such as RTTY come out as
 letters. The engine also scores each signal's keying, by how much better Morse timing explains it than the best

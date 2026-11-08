@@ -544,6 +544,15 @@ def check_json():
         return ["not JSON (%s): %r" % (e, r.stdout[:200])]
     if [x["text"] for x in rows] != [l[2] for l in lines] or [x["frequency"] for x in rows] != [l[1] for l in lines]:
         problems.append("differs from the lines: %r" % rows[:2])
+    calls = set()
+    for x in rows:
+        c = x.get("callsigns")
+        if not isinstance(c, list) or len(set(c)) != len(c) or any(w not in x["text"].split() for w in c):
+            problems.append("callsigns, which should be words of the text, each once: %r" % x)
+        else:
+            calls.update(c)
+    if not {"K1ABC", "W1AW"} <= calls or calls & {"CQ", "DE", "TEST", "PSE", "K"}:
+        problems.append("callsigns found: %s" % sorted(calls))
     for x in rows:
         if not (isinstance(x["time"], float) and isinstance(x["channel"], int) and 5 <= x["wpm"] <= 80 and "snr" in x
                 and isinstance(x.get("score"), (int, float))):
@@ -788,9 +797,14 @@ def stream_then_hold(tmp, *stations, tail=7, end=False):
     return reader, writer
 
 
+def sgr_before(param, word):
+    """A pattern for word drawn just after an SGR escape that sets param, with any other escapes between."""
+    return r"\x1b\[(?:[0-9]+;)*%s(?:;[0-9]+)*m(?:\x1b\[[0-9;]*m|\x1b\([0-9A-Z])*%s" % (param, re.escape(word))
+
+
 def check_view_on_terminal():
-    """The view opens by itself for a stream on a terminal, answers keys while the stream is idle, leaves the terminal as it
-    found it, and prints the lines it was showing."""
+    """The view opens by itself for a stream on a terminal, answers keys while the stream is idle, highlights callsigns,
+    leaves the terminal as it found it, and prints the lines it was showing."""
     if not TERMINAL or not view_is_built():
         return []
     problems = []
@@ -815,6 +829,9 @@ def check_view_on_terminal():
         text = t.data.decode("latin-1")
         if status != 0:
             problems.append("exit %r" % status)
+        highlight = "1" if "NO_COLOR" in os.environ else "35"   # bold, and magenta where there is colour
+        if not re.search(sgr_before(highlight, "K1ABC"), text) or re.search(sgr_before("35", "CQ"), text):
+            problems.append("callsigns are not highlighted, or more than them is: %r" % text[-300:])
         if "\x1b[?1049h" not in text or "\x1b[?1049l" not in text:
             problems.append("the alternate screen was not used and left")
         else:

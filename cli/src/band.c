@@ -54,6 +54,7 @@ typedef struct {
     long changed;                         /* frame of the last change to the text */
     long started;                           /* frame when the unprinted text began */
     char text[TEXT_CAP];
+    unsigned char types[TEXT_CAP];          /* the word class of each byte of text (VAIL_WORD_*) */
 } track;
 
 struct band {
@@ -71,6 +72,7 @@ struct band {
     long hiddenLines;
     band_line_fn *onLine;
     void *ctx;
+    vail_char chars[TEXT_CAP];              /* a channel's text with its word classes, as it is taken */
 };
 
 static int slice_start(int e) { return SLICE_FIRST + e * SLICE_STEP; }
@@ -143,6 +145,7 @@ static float line_score(const track *t)
 static void print_line(band *b, track *t)
 {
     char line[TEXT_TIDY_SIZE(TEXT_CAP)];
+    unsigned char lineTypes[TEXT_TIDY_SIZE(TEXT_CAP)];
     int from = offset_of_char(t->text, t->len, t->printed), to = from, n = 0, end;
     while (to < t->len && n < LINE_CHARS) n += t->text[to++] != ' ';
     if (to < t->len && t->text[to] != ' ') {
@@ -154,7 +157,7 @@ static void print_line(band *b, track *t)
     if (is_station(t) && end > from && !has_older_twin(b, t)) {
         if (b->showAll || line_score(t) >= MIN_SCORE) {
             band_line out;
-            text_tidy(t->text + from, end - from, line);
+            text_tidy(t->text + from, t->types + from, end - from, line, lineTypes);
             out.frame = t->started;
             out.channel = t->id;
             out.hz = bin_hz(t->bin);
@@ -162,6 +165,7 @@ static void print_line(band *b, track *t)
             out.wpm = t->wpm;
             out.score = line_score(t);
             out.text = line;
+            out.types = lineTypes;
             b->onLine(b->ctx, &out);
         } else {
             b->hiddenLines++;
@@ -178,10 +182,12 @@ static void print_all(band *b, track *t)
     while (t->printed < count_chars(t->text, t->len)) print_line(b, t);
 }
 
-/* dropped: the characters the engine has shifted out of the front of this channel's text so far. */
-static void track_update(band *b, track *t, const char *text, int len, long dropped)
+/* dropped: the characters the engine has shifted out of the front of this channel's text so far. chars: n records of the
+ * text with their word classes, which can change while the text does not. */
+static void track_update(band *b, track *t, const char *text, int len, const vail_char *chars, int n, long dropped)
 {
-    int gone = (int)(dropped - t->dropped);
+    int gone = (int)(dropped - t->dropped), i;
+    for (i = 0; i < len; i++) t->types[i] = (unsigned char)(i < n ? chars[i].wordType : VAIL_WORD_GENERIC);
     if (!gone && len == t->len && !memcmp(text, t->text, (size_t)len)) return;
     t->dropped = dropped;
     t->printed -= gone;
@@ -250,7 +256,8 @@ static void poll_channels(band *b)
             t->seen = 1;
             vail_channel_stats(b->engine[e], i, &t->snr, &t->wpm, &t->state);
             vail_channel_confidence(b->engine[e], i, &t->score);
-            track_update(b, t, text, len, vail_channel_dropped(b->engine[e], i));
+            track_update(b, t, text, len, b->chars, vail_channel_chars(b->engine[e], i, b->chars, TEXT_CAP),
+                         vail_channel_dropped(b->engine[e], i));
             if (t->printed < t->chars) {
                 t->scoreSum += t->score;
                 t->scoreFrames++;
@@ -386,26 +393,27 @@ void band_finish(band *b)
 int band_signals(const band *b, band_signal *out, int max, int unprintedOnly)
 {
     char tidy[TEXT_TIDY_SIZE(TEXT_CAP)];
+    unsigned char tidyTypes[TEXT_TIDY_SIZE(TEXT_CAP)];
     int i, n = 0;
     for (i = 0; i < b->nTracks && n < max; i++) {
         const track *t = b->tracks[i];
-        const char *text;
         band_signal s;
-        int j, from = 0, len;
+        int j, from = 0, len, cut;
         if (!is_station(t) || has_older_twin(b, t)) continue;
         if (!b->showAll && line_score(t) < MIN_SCORE) continue;
         if (unprintedOnly) {
             if (t->printed >= count_chars(t->text, t->len)) continue;
             from = offset_of_char(t->text, t->len, t->printed);
         }
-        len = text_tidy(t->text + from, t->len - from, tidy);
-        text = len < BAND_LIVE_TEXT ? tidy : tidy + len - (BAND_LIVE_TEXT - 1);
+        len = text_tidy(t->text + from, t->types + from, t->len - from, tidy, tidyTypes);
+        cut = len < BAND_LIVE_TEXT ? 0 : len - (BAND_LIVE_TEXT - 1);   /* the newest text is what is kept */
         s.hz = bin_hz(t->bin);
         s.snr = t->snr;
         s.wpm = t->wpm;
         s.score = line_score(t);
         s.decoding = t->state == API_STATE_DECODING || t->state == API_STATE_LOCKED_DECODING;
-        memcpy(s.text, text, strlen(text) + 1);
+        memcpy(s.text, tidy + cut, (size_t)(len - cut) + 1);
+        memcpy(s.types, tidyTypes + cut, (size_t)(len - cut));
         for (j = n++; j > 0 && out[j - 1].hz > s.hz; j--) out[j] = out[j - 1];
         out[j] = s;
     }

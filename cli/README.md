@@ -19,8 +19,9 @@ $ vail-cli -d "USB Audio"
  q quit  c clear  Up/Down PgUp/PgDn scroll  ? help
 ```
 
-Each signal has a row that updates in place, and finished lines collect in the log below. When you quit, the terminal comes
-back as it was and the lines are printed there, so nothing is lost with the screen.
+Each signal has a row that updates in place, and finished lines collect in the log below. Words the decoder takes for
+callsigns are highlighted, in bold magenta (bold with `NO_COLOR`). When you quit, the terminal comes back as it was and the
+lines are printed there, so nothing is lost with the screen.
 
 Send stdout anywhere else and it is finished lines of text, always clean:
 
@@ -28,7 +29,8 @@ Send stdout anywhere else and it is finished lines of text, always clean:
 vail-cli | grep --line-buffered K1ABC        # watch for a callsign
 vail-cli >> band.log                         # keep a log
 vail-cli -T >> band.log                      # keep a log and watch the full-screen view
-vail-cli --json | jq -r .text                # JSON Lines, with SNR, speed and Morse score
+vail-cli --json | jq -r .text                # JSON Lines, with SNR, speed, Morse score and callsigns
+vail-cli --json | jq -r '.callsigns[]'       # only the callsigns heard
 vail-cli recording.wav                       # decode a recording (WAV, FLAC, MP3)
 vail-cli --plain                             # lines on the terminal, as for a screen reader
 
@@ -57,7 +59,7 @@ Raw samples on stdin, always little-endian:
 Output:
   -T, --view            full-screen view, on the terminal whatever stdout is
   -p, --plain           finished lines of text only, as on a pipe
-  -j, --json            finished lines as JSON Lines, with SNR, speed and Morse score
+  -j, --json            finished lines as JSON Lines, with SNR, speed, Morse score and callsigns
   -a, --all             also show text whose keying does not fit Morse, such as speech or RTTY
 
   -h, --help            show this help and exit
@@ -144,7 +146,7 @@ sound card ─ miniaudio ─ 8 kHz mono ─ FFT ─┬─ slice 1 ─ vail engin
                                            └─ slice 5 ─ vail engine ─┘
 ```
 
-In `src/`: `audio.c` gets samples, `band.c` turns them into lines, `text.c` tidies them and judges them, `output.c` writes stdout,
+In `src/`: `audio.c` gets samples, `band.c` turns them into lines, `text.c` tidies them, `output.c` writes stdout,
 `view.c` is the full-screen view, `options.c` is the command line, and `main.c` runs it all.
 
 - **One engine sees 1 kHz, so five share the band.** vail decodes 128 bins of a 1024-point FFT. Instead of

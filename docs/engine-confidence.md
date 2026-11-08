@@ -191,7 +191,7 @@ carried to the channel's next line, it let 8 more lines through: about half with
 `W1KK`), and the rest garbage, such as `T T N UR1AL C` from a crowd in a room. At 4.6 nats a word, synthetic audio that is not
 Morse went from 0.03 % to 0.31 % shown. It was left out, as what it gains is lines that are as much garbage as text, and the
 mean now lets `SP8CF 5NN 1D` through on its own. It would fit better as presentation, to highlight callsigns and
-reports, than as a gate.
+reports, than as a gate, and vail-cli now highlights the callsigns that `WRD` finds.
 
 ## Measuring again
 

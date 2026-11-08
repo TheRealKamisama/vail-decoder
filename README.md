@@ -103,7 +103,9 @@ vail_fe_free(fe);
 
 There are also queries for state, pitch, SNR, WPM and channel count (`API_State`, `API_Pitch`,
 `API_Snr`, `API_Wpm`, `API_ChannelCount`). `API_PitchLock(h, hz)` locks the pitch. Full text is
-available with `vail_current_text` and `vail_channel_text`, and `vail_channel_dropped` says how
+available with `vail_current_text` and `vail_channel_text`, and `vail_channel_chars` gives a channel's
+text as `vail_char` records with each word's class (`VAIL_WORD_CALL` for a callsign, others for reports and
+prosign words), so that a host can highlight callsigns. `vail_channel_dropped` says how
 much of a channel's text a full message has dropped from its front. `vail_channel_confidence` says
 how far a channel's keying is Morse, as a log-odds, so that a host can leave out speech, music and
 data modes ([docs/engine-confidence.md](docs/engine-confidence.md)). See `src/vail.h`.

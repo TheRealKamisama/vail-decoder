@@ -41,6 +41,17 @@ typedef struct {
     uint8_t lowSnr;
 } vail_char;
 
+/* What a word is, as WRD reads it, in vail_char.wordType: any word, a dictionary word, a signal report such as 5NN, a
+ * prosign word such as DE or TEST, QRL, or a callsign. Spaces between words are VAIL_WORD_GENERIC. */
+enum {
+    VAIL_WORD_GENERIC = 0,
+    VAIL_WORD_DICT = 1,
+    VAIL_WORD_REPORT = 2,
+    VAIL_WORD_PROSIGN = 3,
+    VAIL_WORD_QRL = 4,
+    VAIL_WORD_CALL = 5
+};
+
 typedef struct vail_api vail_api;   /* opaque handle H */
 
 vail_api *API_New(void);
@@ -63,6 +74,11 @@ void API_ModeSet(vail_api *h, int v);
 int vail_current_text(const vail_api *h, char *buf, int cap);
 int vail_channel_count_all(const vail_api *h);
 int vail_channel_text(const vail_api *h, int idx, char *buf, int cap, int *pitchHz, int *id);
+/* That channel's text as vail_channel_text gives it, as one vail_char for each of its bytes, spaces included, so that a
+ * host can show what each word is, such as a callsign (VAIL_WORD_CALL). A word's class can change as more text comes in,
+ * as its letters can. Given room for cap records it stops where vail_channel_text stops given cap bytes, so the two
+ * match one for one. Returns how many it wrote, or -1 if there is no such channel. */
+int vail_channel_chars(const vail_api *h, int idx, vail_char *out, int cap);
 /* How many characters that channel's text has dropped from its front so far, as a full message does. A host that
  * follows the text moves its position back by the increase; repeating text makes this impossible to tell from the
  * text itself. */

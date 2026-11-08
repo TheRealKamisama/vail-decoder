@@ -53,7 +53,9 @@ behaviour is measured with `tools/eval.py` and `tools/weak.py`; `cli/tests/e2e.p
 ncurses is optional for `cli/` (`view.c` compiles to stubs without it), and everything but the full-screen view must work
 without it. Whether a channel is Morse at all is the engine's to say (`vail_channel_confidence`, `docs/engine-confidence.md`):
 `cli/src/band.c` leaves out a line whose keying scores below `MIN_SCORE` (`line_score`: the score as the line prints, or its
-mean while the line's text came in), and `--all` shows it.
+mean while the line's text came in), and `--all` shows it. Callsigns are highlighted from the engine's word classes
+(`vail_channel_chars`: one `vail_char` per byte of `vail_channel_text`), which `band.c` keeps beside the text and
+`text_tidy` carries through; only the view shows them, and `--json` lists them, so plain output never has escape codes.
 
 ## Versions and releases
 

@@ -353,6 +353,72 @@ static void test_cvd(void)
     free(p);
 }
 
+/* WRD reads a callsign as one, and DE as a prosign word */
+static void test_wrd(void)
+{
+    static const char *text = "CQ CQ DE K1ABC K1ABC K";
+    Wrd *w = malloc(sizeof *w);
+    Char ch[32];
+    int n = 0, i;
+    const char *p;
+    for (p = text; *p; p++) {
+        if (*p == ' ') { ch[n - 1].wordSpaceProb = 0.99f; continue; }
+        memset(&ch[n], 0, sizeof ch[n]);
+        ch[n].charCode = (uint8_t)*p;
+        ch[n].elementOrdinal = 10 * (n + 1);
+        ch[n].wordSpaceProb = 0.001f;
+        n++;
+    }
+    wrd_init(w);
+    wrd_reset_batch(w);
+    wrd_process_chars(w, ch, n, 1);
+    for (i = 6; i <= 15; i++) CHECK(ch[i].wordType == WT_CALL, "K1ABC character %d is class %d", i, ch[i].wordType);
+    CHECK(ch[4].wordType == WT_PROSIGN && ch[5].wordType == WT_PROSIGN, "DE is class %d", ch[4].wordType);
+    CHECK(ch[10].wordEnd != WE_NONE && ch[9].wordEnd == WE_NONE, "word ends in K1ABC");
+    wrd_free(w);
+    free(w);
+}
+
+/* vail_channel_chars matches vail_channel_text byte for byte, with each word's class */
+static void test_chars(void)
+{
+    static const char *words[] = { "CQ", "DE", "K1ABC", "K" };
+    static const int kinds[] = { WT_GENERIC, WT_PROSIGN, WT_CALL, WT_GENERIC };
+    vail_api *h = API_New();
+    Char batch[16];
+    vail_char out[64];
+    char text[64];
+    int n = 0, w, i, len, got, cap;
+    API_PitchLock(h, 700);
+    for (w = 0; w < 4; w++) {
+        const char *p;
+        for (p = words[w]; *p; p++, n++) {
+            memset(&batch[n], 0, sizeof batch[n]);
+            batch[n].charCode = (uint8_t)*p;
+            batch[n].wordType = kinds[w];
+            batch[n].elementOrdinal = 10 * (n + 1);
+            batch[n].wordEnd = p[1] ? WE_NONE : (w == 1 ? WE_LONG : WE_SHORT);
+        }
+    }
+    CHECK(vail_channel_count_all(h) == 1, "%d channels after a pin", vail_channel_count_all(h));
+    msg_merge_chars(((Bcm *)h)->currentChannel->msgA, batch, n);
+    len = vail_channel_text(h, 0, text, sizeof text, NULL, NULL);
+    got = vail_channel_chars(h, 0, out, 64);
+    CHECK(!strcmp(text, "CQ DE  K1ABC K "), "text '%s'", text);
+    CHECK(got == len, "%d records for %d bytes", got, len);
+    for (i = 0; i < got && i < len; i++) CHECK(out[i].ch == (uint8_t)text[i], "record %d is %d, the text has %d", i, out[i].ch, text[i]);
+    for (i = 7; i <= 11 && i < got; i++) CHECK(out[i].wordType == VAIL_WORD_CALL, "K1ABC byte %d is class %d", i, out[i].wordType);
+    CHECK(got > 6 && out[3].wordType == VAIL_WORD_PROSIGN && out[5].wordType == VAIL_WORD_GENERIC &&
+          out[6].wordType == VAIL_WORD_GENERIC, "DE and its spaces");
+    for (cap = 1; cap <= len + 4; cap++) {
+        char small[64];
+        int a = vail_channel_text(h, 0, small, cap, NULL, NULL), b = vail_channel_chars(h, 0, out, cap);
+        CHECK(a == b && b < cap, "with room for %d: %d bytes of text, %d records", cap, a, b);
+    }
+    CHECK(vail_channel_chars(h, 1, out, 64) == -1 && vail_channel_chars(h, -1, out, 64) == -1, "no such channel");
+    API_Free(h);
+}
+
 int main(void)
 {
     test_fe();
@@ -365,6 +431,8 @@ int main(void)
     test_api();
     test_lik();
     test_cvd();
+    test_wrd();
+    test_chars();
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

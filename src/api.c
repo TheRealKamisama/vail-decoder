@@ -222,6 +222,35 @@ int vail_channel_text(const vail_api *h, int idx, char *buf, int cap, int *pitch
     return msg_render(c->msgA, buf, cap);
 }
 
+/* The public word classes are WRD's own (vail.h); this does not compile if they part. */
+#define API_SAME(a, b) ((int)(a) == (int)(b))
+typedef char api_word_classes_match[(API_SAME(VAIL_WORD_GENERIC, WT_GENERIC) && API_SAME(VAIL_WORD_DICT, WT_DICT) &&
+                                     API_SAME(VAIL_WORD_REPORT, WT_REPORT) && API_SAME(VAIL_WORD_PROSIGN, WT_PROSIGN) &&
+                                     API_SAME(VAIL_WORD_QRL, WT_QRL) && API_SAME(VAIL_WORD_CALL, WT_CALL)) ? 1 : -1];
+
+/* As msg_render writes the text, with the same condition to stop, so the records match its bytes for the same cap. */
+int vail_channel_chars(const vail_api *h, int idx, vail_char *out, int cap)
+{
+    const Msg *m;
+    int i, n = 0;
+    if (idx < 0 || idx >= h->bcm.nChannels) return -1;
+    m = h->bcm.channels[idx]->msgA;
+    for (i = 0; i < m->count && n < cap - 3; i++) {
+        const Char *c = &m->chars[i];
+        int spaces = msg_rendered_len(c) - 1;
+        out[n].ch = c->charCode;
+        out[n].wordType = c->wordType;
+        out[n].lowSnr = c->lowSnr;
+        n++;
+        for (; spaces > 0; spaces--, n++) {
+            out[n].ch = ' ';
+            out[n].wordType = WT_GENERIC;
+            out[n].lowSnr = 0;
+        }
+    }
+    return n;
+}
+
 long vail_channel_dropped(const vail_api *h, int idx)
 {
     if (idx < 0 || idx >= h->bcm.nChannels) return 0;

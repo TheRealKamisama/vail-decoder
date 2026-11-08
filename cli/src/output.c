@@ -106,11 +106,55 @@ void output_text(const char *stamp, int hz, const char *text)
     printf("%s %5d  %s\n", stamp, hz, text);
 }
 
-/* The field names are those of libmorsedec's JSON Lines, as far as they mean the same. The score is rounded down, so that
- * "score" >= 1 picks the lines that are shown without --all. */
+static void put_json_string(const char *s, int n)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    int i;
+    putchar('"');
+    for (i = 0; i < n; i++) {
+        if (p[i] == '"' || p[i] == '\\') printf("\\%c", p[i]);
+        else if (p[i] < 32 || p[i] >= 127) printf("\\u%04x", p[i]);
+        else putchar(p[i]);
+    }
+    putchar('"');
+}
+
+/* Whether the n-byte word at `at` is a callsign that came earlier in the line too. */
+static int earlier_callsign(const band_line *line, int at, int n)
+{
+    const char *t = line->text;
+    int k = 0;
+    while (k < at) {
+        int end = k;
+        while (end < at && t[end] != ' ') end++;
+        if (end - k == n && line->types[k] == VAIL_WORD_CALL && !memcmp(t + k, t + at, (size_t)n)) return 1;
+        k = end + 1;
+    }
+    return 0;
+}
+
+/* The words the engine reads as callsigns, each once, in the order they came. */
+static void put_callsigns(const band_line *line)
+{
+    const char *t = line->text;
+    int len = (int)strlen(t), i = 0, any = 0;
+    putchar('[');
+    while (i < len) {
+        int end = i;
+        while (end < len && t[end] != ' ') end++;
+        if (line->types && end > i && line->types[i] == VAIL_WORD_CALL && !earlier_callsign(line, i, end - i)) {
+            if (any++) putchar(',');
+            put_json_string(t + i, end - i);
+        }
+        i = end + 1;
+    }
+    putchar(']');
+}
+
+/* The field names are those of libmorsedec's JSON Lines, as far as they mean the same; it has no score or callsigns. The
+ * score is rounded down, so that "score" >= 1 picks the lines that are shown without --all. */
 static void put_json(const band_line *line, long nowFrame)
 {
-    const unsigned char *p;
     printf("{\"time\":%.3f,", line->frame * FRAME_SECONDS);
     if (g_wallClock) {
         time_t when = when_heard(line, nowFrame);
@@ -120,14 +164,12 @@ static void put_json(const band_line *line, long nowFrame)
                    tm->tm_hour, tm->tm_min, tm->tm_sec);
         }
     }
-    printf("\"channel\":%d,\"frequency\":%d,\"snr\":%d,\"wpm\":%d,\"score\":%.1f,\"text\":\"", line->channel, line->hz,
+    printf("\"channel\":%d,\"frequency\":%d,\"snr\":%d,\"wpm\":%d,\"score\":%.1f,\"text\":", line->channel, line->hz,
            line->snr, line->wpm, floor(line->score * 10.0) / 10.0);
-    for (p = (const unsigned char *)line->text; *p; p++) {
-        if (*p == '"' || *p == '\\') printf("\\%c", *p);
-        else if (*p < 32 || *p >= 127) printf("\\u%04x", *p);
-        else putchar(*p);
-    }
-    printf("\"}\n");
+    put_json_string(line->text, (int)strlen(line->text));
+    printf(",\"callsigns\":");
+    put_callsigns(line);
+    printf("}\n");
 }
 
 void output_line(const band_line *line, long nowFrame)

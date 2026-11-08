@@ -178,7 +178,7 @@ static void on_line(void *ctx, const band_line *line)
     if (s->view) {
         char stamp[OUTPUT_STAMP_SIZE];
         output_stamp(line, band_frame(s->band), stamp);
-        view_line(s->view, stamp, line->hz, line->text);
+        view_line(s->view, stamp, line->hz, line->text, line->types);
     }
     if (!s->viewOwnsStdout) output_line(line, band_frame(s->band));
 }

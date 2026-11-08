@@ -23,6 +23,7 @@ typedef struct {
     float score;                             /* how far the line's keying is Morse, a log-odds: the larger of the score as
                                                 it printed and its mean while its text came in */
     const char *text;
+    const unsigned char *types;              /* what each byte of text is part of: VAIL_WORD_CALL for a callsign, ... */
 } band_line;
 
 typedef void band_line_fn(void *ctx, const band_line *line);
@@ -33,6 +34,7 @@ typedef struct {
     float score;
     int decoding;                            /* else it has paused */
     char text[BAND_LIVE_TEXT];               /* its newest text, which may still change */
+    unsigned char types[BAND_LIVE_TEXT];     /* as band_line.types */
 } band_signal;
 
 /* showAll: print text whose keying does not fit Morse too. */
