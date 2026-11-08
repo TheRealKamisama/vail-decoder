@@ -142,11 +142,21 @@ Music, RTTY, on-off data and pumped noise show nothing at any of these, and long
 41 recordings from [Freesound](https://freesound.org), listed at the end, decoded by vail-cli with `--all` and by default. 9 are
 of CW (a busy 40 m band, a 40 m pile-up, a noisy 40 m receiver, 30 m, 15 m with 8 signals at once, hand keying, a numbers
 station's code groups, a beacon, and shortwave beeps that are mostly Morse), 3 are mixed (tuning across a band, data or voices
-with Morse), 3 are unknown (labelled CW or numbers by their uploaders), and 26
-have no Morse in them (RTTY, FT8, JT65, PSK31, other data, SSB, AM broadcast, static, the Buzzer, rooms, a pub, a crowd, a
-classroom, piano and jazz). Symbols printed:
+with Morse), 3 are unknown (labelled CW or numbers by their uploaders), and 26 have no Morse in them (RTTY, FT8, JT65, PSK31,
+other data, SSB, AM broadcast, static, the Buzzer, rooms, a pub, a crowd, a classroom, piano and jazz). Symbols printed:
 
-{REAL_TABLE}
+| Recordings | Files | With `--all` | Text filter | Score |
+| --- | ---: | ---: | ---: | ---: |
+| CW | 9 | 5681 | 3766 | 2420 |
+| Mixed | 3 | 5679 | 777 | 20 |
+| Unknown | 3 | 2088 | 339 | 283 |
+| No Morse | 26 | 46985 | 7879 | **55** |
+
+Both CLIs give the same lines with `--all` on every recording, so they differ only in what they leave out. On the CW
+recordings, most of what the score leaves out is garbage, but not all of it (see Limits). On the mixed ones, the Morse prints
+with both, such as `E VVVDEGIL` at +10.8 after the voices and `U I9BH W` at +12.1 among the data, and what the score leaves out
+is the voices, data and tuning. The 9 words in it that read as callsigns or prosigns are in lines such as `E E E E DE` and
+`<SK> AE8VM 1PS , 0E M5HC CJ1`, which all score between −1 and −40. What the 3 unknown recordings should print is not known.
 
 ## Limits
 
@@ -154,16 +164,17 @@ classroom, piano and jazz). Symbols printed:
   16 were misread anyway (`TNST` for `TEST`, `TH` for `TU`), and 8 were a correct `TEST`, once at 0 dB and once at +3 dB with
   fading. The text filter's worst case, `TEN NET ANT TAN`, now prints, as its keying is Morse whatever its letters.
 - **Real text is lost on busy bands.** On the 9 CW recordings, of the words that read as callsigns, reports, prosigns or
-  dictionary words, the text filter printed {OLD_REC} and the score prints {NEW_REC}; of all other words, most of them garbage,
-  {OLD_OTH} and {NEW_OTH}. The real words lost are on channels whose keying scores far below 0, not near the threshold: at −2
-  only 11 more would print, and the recordings with no Morse would print 8934 symbols, more than the text filter's
-  7879.
+  dictionary words, the text filter printed 250 and the score prints 208; of all other words, most of them garbage, 1393 and
+  795. The real words lost are on channels whose keying scores far below 0, not near the threshold: at −2 only 11 more would
+  print, and the recordings with no Morse would print 8934 symbols, more than the text filter's 7879.
 - **Keying far from the standard timing scores low.** The clearest case is a contest station on the 15 m recording, at about
   45 WPM with dots of 3 frames and element gaps of 2: a unit of about 27 ms, the time scale of RTTY's 22 ms bits, at which 10.6 ms
-  frames blur the 1:3 structure the score tests. {HA5JI} Accepting it would take weighting on the Morse side, which let real RTTY
-  reach +33. The beacon's one line, `CS3B O MWAO`, is lost too: the score reached +12 on the callsign, then fell as a fading
-  carrier followed it.
-- **Garbage that follows a station** on the same channel can print while the score is still high{GARBAGE_EXAMPLE}.
+  frames blur the 1:3 structure the score tests. That station, HA5JI, has three lines: the score prints
+  `O HA5JI TEST HAMSJI TEST HA5JI HA5JI TEST TEST` at +4.3, and leaves out the other two, at −20.3 and −8.2, which the text
+  filter printed. Accepting keying like it would take weighting on the Morse side, which let real RTTY reach +33. The beacon's
+  one line, `CS3B O MWAO`, is lost too: the score reached +12 on the callsign, then fell as a fading carrier followed it.
+- **Garbage that follows a station** on the same channel can print while the score is still high, such as `G T T` at +8.1 on
+  the 15 m recording, right after `IA3TH NA 5NN 72 T` (+15.0) at the same 2008 Hz.
 - **Per-character confidence was not done.** `vail_char.lowSnr` is still never set when `CVD` decodes, so it is always 0.
 
 ## A callsign vocabulary
