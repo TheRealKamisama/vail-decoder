@@ -19,13 +19,15 @@ host may lack a system compiler; any C99 compiler works via `CC`, e.g. `CC="zig 
 ./build.sh                                   # build/vail_decode, build/cwgen, build/test_conformance
 ./build/test_conformance                     # 13-conformance vectors, primitive cross-checks, unit tests
 ./build/cwgen -o x.wav -t "CQ DE K1ABC" -w 25 -f 700 -n 3    # synthetic Morse; options in its header comment
-./build/vail_decode [-a [-c]] [-m] [-s] [-v] [-T trace.txt] [-E elems.txt] x.wav # decode a WAV (any rate, 16-bit); -c: Morse scores
+./build/vail_decode [-a [-c]] [-m [-q]] [-s] [-v] [-T trace.txt] [-E elems.txt] x.wav # decode a WAV (any rate, 16-bit); -c: Morse scores, -q: character confidences
 python3 tools/eval.py [--quick] [--seeds N] [--filter SUBSTR] [--show]   # CER over the original grid
 python3 tools/weak.py [--full] [--builds A,B] [--snr ..] [--cond ..] [--show]   # weak-signal grid
 python3 tools/elemcheck.py [--build DIR] [--snr -10,-12] [--cond clean]  # element errors vs ground truth
 python3 tools/lmgen.py                       # regenerates src/lm_table.h (CVD character trigram)
 python3 tools/closepair.py [--builds A,B]    # two close stations, both scored, ghosts counted (docs/close-signals.md)
 python3 tools/notmorse.py [--seeds N] [--show] [--wav F..]   # speech, music, data modes: false text, and real text lost
+python3 tools/charconf.py [--builds A,B] [--wav F,..] [--show]  # vail_char.confidence: wrong vs right characters (docs/char-confidence.md)
+python3 tools/bandnoise.py DIR               # band-like audio with no Morse (RTTY, voice, carriers, QRN, AGC-pumped noise)
 (cd cli && make && make test)                # build/vail-cli and its end-to-end tests; make NCURSES=0 leaves the view out
 ```
 
@@ -124,6 +126,9 @@ FE → BCM → for each channel: SIG{ SPM → ENV → SEG ⇄ STA (⇄ SPD) → 
 - `SPD_TUNE_MORSE` (on by default) only reports: on the same `SegObs`, `SPD` also runs the standard timing at STA's
   speed and models of keying that is not Morse, and the leaky log-likelihood margin between them is
   `vail_channel_confidence`. Decoding must not depend on it: `vail_decode` output is byte-identical with it off.
+- `CVD_TUNE_CONF` (on by default) also only reports: `CVD` scores each code `CVD_CONF_DELAY` frames after it ends, as the best
+  state whose path has it over the best whose path has not (`code_margin`), into `vail_char.confidence`; `lowSnr` is that below
+  `CVD_CONF_DOUBT`. Scoring at commit is no use, because the survivors have merged by then (`docs/char-confidence.md`).
 
 ## Code layout
 

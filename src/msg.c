@@ -12,7 +12,7 @@ void msg_init(Msg *m)
 static int char_equal(const Char *a, const Char *b)
 {
     return a->charCode == b->charCode && a->wordType == b->wordType &&
-           a->elementOrdinal == b->elementOrdinal && a->lowSnr == b->lowSnr &&
+           a->elementOrdinal == b->elementOrdinal && a->lowSnr == b->lowSnr && a->confidence == b->confidence &&
            a->wordSpaceProb == b->wordSpaceProb && a->wordEnd == b->wordEnd;
 }
 

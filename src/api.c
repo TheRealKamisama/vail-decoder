@@ -42,7 +42,7 @@ void API_Free(vail_api *h)
     free(h);
 }
 
-static void list_add(vail_api *h, uint8_t ch, int32_t wordType, uint8_t lowSnr)
+static void list_add(vail_api *h, uint8_t ch, int32_t wordType, uint8_t lowSnr, float confidence)
 {
     if (h->listCount == h->listCap) {
         h->listCap = h->listCap ? h->listCap * 2 : 64;
@@ -51,6 +51,7 @@ static void list_add(vail_api *h, uint8_t ch, int32_t wordType, uint8_t lowSnr)
     h->list[h->listCount].ch = ch;
     h->list[h->listCount].wordType = wordType;
     h->list[h->listCount].lowSnr = lowSnr;
+    h->list[h->listCount].confidence = confidence;
     h->listCount++;
 }
 
@@ -58,9 +59,12 @@ static void append_emitted(vail_api *h, const Char *recs, int n)     /* 08 §4.3
 {
     int base = h->listCount, i;
     for (i = 0; i < n; i++) {
-        list_add(h, recs[i].charCode, recs[i].wordType, recs[i].lowSnr);
-        if (recs[i].wordEnd == WE_SHORT) list_add(h, ' ', WT_GENERIC, 0);
-        else if (recs[i].wordEnd == WE_LONG) { list_add(h, ' ', WT_GENERIC, 0); list_add(h, ' ', WT_GENERIC, 0); }
+        list_add(h, recs[i].charCode, recs[i].wordType, recs[i].lowSnr, recs[i].confidence);
+        if (recs[i].wordEnd == WE_SHORT) list_add(h, ' ', WT_GENERIC, 0, CHAR_CONF_MAX);
+        else if (recs[i].wordEnd == WE_LONG) {
+            list_add(h, ' ', WT_GENERIC, 0, CHAR_CONF_MAX);
+            list_add(h, ' ', WT_GENERIC, 0, CHAR_CONF_MAX);
+        }
     }
     h->pending += h->listCount - base;
 }
@@ -78,8 +82,8 @@ int API_Feed(vail_api *h, float *s)                        /* 09 §2.3 */
     cur = h->bcm.currentChannel;
     if ((cur ? cur->id : 0) != h->lastCurrentId) {
         if (h->lastCurrentId != 0 && cur) {
-            list_add(h, API_SYNTH_NEWLINE, WT_GENERIC, 0);
-            list_add(h, API_SYNTH_MARK, WT_GENERIC, 0);
+            list_add(h, API_SYNTH_NEWLINE, WT_GENERIC, 0, CHAR_CONF_MAX);
+            list_add(h, API_SYNTH_MARK, WT_GENERIC, 0, CHAR_CONF_MAX);
         }
         h->pending = 0;                                    /* OnChannelChanged */
         h->channelChanged = 1;
@@ -195,7 +199,7 @@ int API_CharCount(const vail_api *h) { return h->listCount; }
 
 vail_char API_CharAt(const vail_api *h, int i)
 {
-    vail_char none = { '?', 0, 0 };
+    vail_char none = { '?', 0, 0, CHAR_CONF_MAX };
     if (i < 0 || i >= h->listCount) return none;          /* host error (12-open-items C4) */
     return h->list[i];
 }

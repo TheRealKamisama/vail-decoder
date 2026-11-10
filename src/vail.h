@@ -34,12 +34,20 @@ void vail_fe_free(vail_fe *fe);
 /* Consumes exactly VAIL_HOP_SAMPLES samples, returns a pointer to the reused 128-bin Spectrum. */
 const float *vail_fe_process(vail_fe *fe, const int16_t *samples);
 
-/* Host-visible character object (09 §2.10). */
+/* Host-visible character object (09 §2.10). confidence (an extension) says how sure the decoder was of this character:
+ * how much more likely, as a log-odds in nats, the text it chose is than the best text that has another character here
+ * or none, given everything heard up to the moment the character was committed. Around 0 it nearly chose otherwise; it
+ * is capped at VAIL_CONF_MAX, which spaces and characters with no doubt at all get. A host can fade a character by it.
+ * lowSnr is 1 where confidence is below a default threshold, for hosts that want one bit. Both are fixed once the
+ * character is first given out; a revised character comes back with its own. */
 typedef struct {
     uint8_t ch;
     int32_t wordType;
     uint8_t lowSnr;
+    float confidence;
 } vail_char;
+
+#define VAIL_CONF_MAX      50.0f
 
 typedef struct vail_api vail_api;   /* opaque handle H */
 

@@ -125,6 +125,7 @@ static void decode_run(Chr *c, const Element *run, int n, const Element *boundar
         ch.charCode = (uint8_t)out[j - 1];
         ch.elementOrdinal = j + anchor - m;
         ch.lowSnr = flag;
+        ch.confidence = flag ? 0.0f : CHAR_CONF_MAX;
         ch.wordSpaceProb = CHR_WORDSPACE_DEFAULT;
         ch.wordEnd = (boundary && boundary->kind == SEG_KIND_GAP_LONG) ? WE_SHORT : WE_NONE;
         ch.wordType = WT_GENERIC;

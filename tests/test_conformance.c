@@ -316,6 +316,71 @@ static int keyed_obs(const char *text, double wpm, SegObs *o, int max)
     return n;
 }
 
+/* decodes o[0..n) with CVD into got and conf (room for 64), returns the number of characters, or -1 if a lowSnr disagrees
+ * with its confidence */
+static int cvd_decode_conf(Cvd *v, const Sta *sta, const SegObs *o, int n, char *got, float *conf)
+{
+    int i, j, m = 0;
+    cvd_init(v);
+    cvd_set_model(v, sta);
+    for (i = 0; i < n; i++) {
+        cvd_update(v, &o[i]);
+        cvd_commit(v, i == n - 1, sta);
+        for (j = 0; j < v->outCount && m < 63; j++, m++) {
+            got[m] = (char)v->out[j].charCode;
+            conf[m] = v->out[j].confidence;
+            if (v->out[j].lowSnr != (v->out[j].confidence < CVD_CONF_DOUBT)) return -1;
+        }
+    }
+    got[m] = 0;
+    return m;
+}
+
+static float conf_min(Cvd *v, const Sta *sta, const SegObs *o, int n)
+{
+    char got[64];
+    float conf[64], lo = CHAR_CONF_MAX;
+    int m = cvd_decode_conf(v, sta, o, n, got, conf), i;
+    if (m < 0) return -1.0f;
+    for (i = 0; i < m; i++) if (conf[i] < lo) lo = conf[i];
+    return lo;
+}
+
+/* CVD_TUNE_CONF: blurring the one-unit gap inside the first A of PARIS (key-down log-odds a little above 0) leaves A
+ * against one long mark to the timing alone; that character's confidence drops (7.3 -> 5.1 nats), and the others'
+ * stay above CVD_CONF_DOUBT. Filled in further, the gap reads as one mark (T) and is still doubted. */
+static void test_cvd_conf(void)
+{
+    static SegObs o[4000], blur[4000];
+    static const float level[2] = { 0.3f, 1.5f };
+    Cvd *v = malloc(sizeof *v);
+    Sta sta;
+    double wpm = 20.0, u = 1200.0 / wpm / 10.625;
+    int n = keyed_obs("PARIS PARIS", wpm, o, 4000), i, k, a, b, m0, m, l;
+    float c0[64], c[64], lo;
+    char t0[64], t[64];
+    sta_init(&sta);
+    for (i = 0; i < 5; i++) sta.means[i] = (float)log(112.94 / wpm * (i == 1 || i == 3 ? 3.0 : (i == 4 ? 7.0 : 1.0)));
+    m0 = cvd_decode_conf(v, &sta, o, n, t0, c0);
+    CHECK(m0 == 10 && !strcmp(t0, "PARISPARIS"), "CVD decoded clean '%s'", t0);
+    /* P is .--. : 11 units and a letter gap of 3; the A's element gap starts 1 unit after it */
+    for (k = 0; k < n && o[k].keyLogOdds < 0.0f; k++) {}
+    a = (int)(k + 15.0 * u + 0.5);
+    b = (int)(k + 16.0 * u + 0.5);
+    for (l = 0; l < 2; l++) {
+        memcpy(blur, o, (size_t)n * sizeof *o);
+        for (i = a; i < b; i++) { blur[i].keyLogOdds = level[l]; blur[i].riseLogOdds = level[l]; blur[i].fallLogOdds = 0.0f; }
+        m = cvd_decode_conf(v, &sta, blur, n, t, c);
+        CHECK(m == 10 && t[1] == (l ? 'T' : 'A'), "CVD decoded blurred (%g) '%s'", level[l], t);
+        if (m != 10 || m0 != 10) continue;
+        CHECK(c[1] < c0[1] - 1.0f, "CVD confidence %g of the blurred character (%g), clean %g", c[1], level[l], c0[1]);
+        for (i = 3, lo = CHAR_CONF_MAX; i < m; i++) if (c[i] < lo) lo = c[i];
+        CHECK(lo >= CVD_CONF_DOUBT, "CVD confidence %g after the blurred character (%g)", lo, level[l]);
+    }
+    sta_free(&sta);
+    free(v);
+}
+
 static void test_cvd(void)
 {
     static SegObs o[4000];
@@ -343,6 +408,7 @@ static void test_cvd(void)
         for (q = texts[ti], m = 0; *q; q++) if (*q != ' ') want[m++] = *q;
         want[m] = 0;
         CHECK(!strcmp(got, want), "CVD decoded '%s' want '%s'", got, want);
+        CHECK(conf_min(v, &sta, o, n) >= CVD_CONF_DOUBT, "CVD doubts clean keying of '%s'", texts[ti]);
         spd_init(p);
         for (i = 0; i < n; i++) spd_update(p, &o[i]);
         kb = spd_best(p);
@@ -365,6 +431,7 @@ int main(void)
     test_api();
     test_lik();
     test_cvd();
+    test_cvd_conf();
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

@@ -12,6 +12,8 @@
  *     -m     operating mode on: emulate a host that applies API_DeleteCount before appending,
  *            and print the resulting host text
  *     -c     with -a, also print each channel's Morse evidence (vail_channel_confidence): the last and the highest
+ *     -q     with -m, also print a second line: each host character's confidence (vail_char.confidence), one per
+ *            character of the first line, space-separated
  */
 #include <math.h>
 #include <stdio.h>
@@ -38,8 +40,9 @@ static int16_t *resample(const int16_t *in, long n, int rate, long *outN)
 
 int main(int argc, char **argv)
 {
-    int all = 0, stream = 0, verbose = 0, lockHz = 0, mode = 0, conf = 0, rate, i, frame = 0, hostLen = 0;
+    int all = 0, stream = 0, verbose = 0, lockHz = 0, mode = 0, conf = 0, quality = 0, rate, i, frame = 0, hostLen = 0;
     static char host[1 << 16];
+    static float hostConf[1 << 16];
     const char *path = NULL;
     long n, pos;
     int16_t *s, tail[VAIL_HOP_SAMPLES];
@@ -55,6 +58,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-s")) stream = 1;
         else if (!strcmp(argv[i], "-v")) verbose = 1;
         else if (!strcmp(argv[i], "-m")) mode = 1;
+        else if (!strcmp(argv[i], "-q")) quality = 1;
         else if (!strcmp(argv[i], "-c")) conf = 1;
         else if (!strcmp(argv[i], "-p") && i + 1 < argc) lockHz = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-T") && i + 1 < argc) vail_trace = fopen(argv[++i], "w");
@@ -92,7 +96,11 @@ int main(int argc, char **argv)
         if (mode) {
             int c, cnt = API_CharCount(h), d = API_DeleteCount(h);
             hostLen = d > hostLen ? 0 : hostLen - d;
-            for (c = 0; c < cnt && hostLen < (int)sizeof host - 1; c++) host[hostLen++] = (char)API_CharAt(h, c).ch;
+            for (c = 0; c < cnt && hostLen < (int)sizeof host - 1; c++) {
+                vail_char vc = API_CharAt(h, c);
+                hostConf[hostLen] = vc.confidence;
+                host[hostLen++] = (char)vc.ch;
+            }
         }
         if (all && frame % 32 == 0) {           /* remember every channel's latest text */
             int c, k, nc = vail_channel_count_all(h);
@@ -121,7 +129,15 @@ int main(int argc, char **argv)
                     API_State(h), API_Pitch(h), API_Snr(h), API_Wpm(h), API_ChannelCount(h));
     }
     if (stream) putchar('\n');
-    if (mode) { host[hostLen] = 0; printf("%s\n", host); }
+    if (mode) {
+        host[hostLen] = 0;
+        printf("%s\n", host);
+        if (quality) {
+            int c;
+            for (c = 0; c < hostLen; c++) printf(c ? " %.2f" : "%.2f", hostConf[c]);
+            putchar('\n');
+        }
+    }
     if (all) {
         int c;
         for (c = 0; c < nseen; c++) {

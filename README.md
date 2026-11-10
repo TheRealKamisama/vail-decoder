@@ -106,7 +106,9 @@ There are also queries for state, pitch, SNR, WPM and channel count (`API_State`
 available with `vail_current_text` and `vail_channel_text`, and `vail_channel_dropped` says how
 much of a channel's text a full message has dropped from its front. `vail_channel_confidence` says
 how far a channel's keying is Morse, as a log-odds, so that a host can leave out speech, music and
-data modes ([docs/engine-confidence.md](docs/engine-confidence.md)). See `src/vail.h`.
+data modes ([docs/engine-confidence.md](docs/engine-confidence.md)). Each `vail_char` carries a `confidence`, how sure the
+decoder was of that letter, so that a host can fade the ones it guessed ([docs/char-confidence.md](docs/char-confidence.md)).
+See `src/vail.h`.
 
 ## Architecture
 

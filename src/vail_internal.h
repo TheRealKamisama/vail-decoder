@@ -425,7 +425,11 @@ typedef struct {
     uint8_t lowSnr;
     float wordSpaceProb;
     int32_t wordEnd;
+    float confidence;        /* nats by which the decoder preferred this character to its best alternative (CVD), or
+                              * CHAR_CONF_MAX / 0 from lowSnr (CHR); see vail_char */
 } Char;
+
+#define CHAR_CONF_MAX          VAIL_CONF_MAX
 
 typedef struct {
     Element *elemBuf;        /* pending elements, ascending time order */
@@ -473,9 +477,29 @@ float chr_table_weight(int i);
 #define CVD_LM_ORDER     3           /* 2: character bigram, 3: trigram */
 #endif
 #define CVD_OUT_MAX      64
+/* tuning: each code's confidence is a margin taken CVD_CONF_DELAY frames after it ends (or when it is committed, if that
+ * is sooner): the score of the best state whose path has this code, over the best one whose path has another code there
+ * or none (the same code ending more than CVD_CONF_TOL frames away counts as another). Later, the survivors have mostly
+ * merged into one history and the competitors are gone. lowSnr is set below CVD_CONF_DOUBT. 0 leaves both at the CHR
+ * defaults (confident, lowSnr 0). Decoding does not depend on it. */
+#ifndef CVD_TUNE_CONF
+#define CVD_TUNE_CONF    1
+#endif
+#ifndef CVD_CONF_DELAY
+#define CVD_CONF_DELAY   20
+#endif
+#ifndef CVD_CONF_TOL
+#define CVD_CONF_TOL     8
+#endif
+#ifndef CVD_CONF_DOUBT
+#define CVD_CONF_DOUBT   3.0f
+#endif
 #define CVD_WP_MAX       400
 
-typedef struct { int32_t parent, step; int16_t value; uint8_t isGap, mark; } CvdNode;
+typedef struct { int32_t parent, step; int16_t value; uint8_t isGap, mark; float conf; } CvdNode;   /* conf: of a code,
+                                                                                                * CVD_CONF_UNSET until scored */
+#define CVD_CONF_UNSET   (-1e30f)
+#define CVD_CONF_RING    128         /* > CVD_CONF_DELAY */
 
 typedef struct {
     float markEnd[2][CVD_MARK_MAX + 1], markCont[2][CVD_MARK_MAX + 1];   /* dot / dash hazards (log) */
@@ -494,6 +518,9 @@ typedef struct {
     int step;                /* SEG step of the next frame */
     Char out[CVD_OUT_MAX];
     int outCount;
+    int32_t confRing[CVD_CONF_RING]; /* the code node created at each recent step, -1 if none */
+    int8_t confMemo[CVD_POOL];       /* code_margin's scratch: whether a node's path has the code, -1 unknown */
+    int16_t confStack[CVD_POOL];
 } Cvd;
 
 void cvd_init(Cvd *v);

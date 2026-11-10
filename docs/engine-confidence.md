@@ -175,7 +175,7 @@ is the voices, data and tuning. The 9 words in it that read as callsigns or pros
   one line, `CS3B O MWAO`, is lost too: the score reached +12 on the callsign, then fell as a fading carrier followed it.
 - **Garbage that follows a station** on the same channel can print while the score is still high, such as `G T T` at +8.1 on
   the 15 m recording, right after `IA3TH NA 5NN 72 T` (+15.0) at the same 2008 Hz.
-- **Per-character confidence was not done.** `vail_char.lowSnr` is still never set when `CVD` decodes, so it is always 0.
+- **Per-character confidence** is a separate measure, `vail_char.confidence`: see [char-confidence.md](char-confidence.md).
 
 ## A callsign vocabulary
 
