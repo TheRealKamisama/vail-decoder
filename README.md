@@ -58,6 +58,7 @@ python3 tools/eval.py [--quick] [--seeds N] [--show]        # character error ra
 python3 tools/weak.py [--full] [--builds A,B] [--show]      # weak-signal grid: CER against SNR, -4 to -14 dB
 python3 tools/elemcheck.py [--snr -10,-12]                  # element errors against the generator's truth
 python3 tools/closepair.py [--builds A,B]                   # two close stations, both scored
+python3 tools/telegrams.py DIR --fetch                      # real recorded telegrams against their text
 ```
 
 `cwgen` also simulates timing jitter (`-j`), sinusoidal fading (`-F`/`-D`), Rayleigh fading (`-R`),

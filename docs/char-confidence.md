@@ -132,7 +132,8 @@ come with `vail_channel_chars` on the callsign-highlighting branch, which must t
   do was not looked into.
 - **Fast keying** separates less well (AUC 0.82 at 45 WPM, against 0.86–0.90 at 12–40), and the delay does not help it.
 - **Word spaces are not scored.** A space gets `VAIL_CONF_MAX`; a word split or joined in the wrong place is not doubted.
-- **Measured on synthetic audio.** No real recording was at hand; the thresholds should be checked on band recordings.
+- **Measured on synthetic audio.** The one real set with a full text, recorded telegrams ([telegrams.md](telegrams.md)),
+  agrees where the decoder copies (44 % of wrong and 10 % of right characters below 3) but is not off-air audio.
   [real-audio-plan.md](real-audio-plan.md) plans a labeled set recorded from public receivers.
 
 ## Measuring again

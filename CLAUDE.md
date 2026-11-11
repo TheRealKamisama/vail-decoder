@@ -28,6 +28,7 @@ python3 tools/closepair.py [--builds A,B]    # two close stations, both scored, 
 python3 tools/notmorse.py [--seeds N] [--show] [--wav F..]   # speech, music, data modes: false text, and real text lost
 python3 tools/charconf.py [--builds A,B] [--wav F,..] [--show]  # vail_char.confidence: wrong vs right characters (docs/char-confidence.md)
 python3 tools/bandnoise.py DIR               # band-like audio with no Morse (RTTY, voice, carriers, QRN, AGC-pumped noise)
+python3 tools/telegrams.py DIR [--fetch] [--builds A,B] [--show]   # real recordings with known text (docs/telegrams.md)
 (cd cli && make && make test)                # build/vail-cli and its end-to-end tests; make NCURSES=0 leaves the view out
 ```
 

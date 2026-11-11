@@ -16,6 +16,7 @@ receivers, and uses it to check decoding (CER), the character confidence thresho
 | W1AW code practice and bulletins | the text ARRL publishes for each session | long text at 5–40 WPM, real propagation | ARRL text and audio may not be redistributed |
 | Contest and pileup audio, with Reverse Beacon Network spots | callsigns, frequency, time and speed from the spots | real keying, fast senders, crowded bands | only callsigns are labeled |
 | IZ4KBW's off-air QSO archive | participant callsigns, key type and sometimes speed in each file name | hand keying (paddle, bug, straight key) on 80 and 40 m | no transcripts; partial labels only |
+| IZ4KBW's AA_telegrams folder (done: [telegrams.md](telegrams.md)) | the full text, from a photo of each telegram | 15 complete messages with headers | telephone recordings of a tone in a room, not off-air |
 
 **Beacons.** The NCDXF/IARU network has 18 beacons that take turns on 14.100, 18.110, 21.150, 24.930 and 28.200 MHz: each
 sends its callsign and then four one-second dashes, stepping its power down, in a 10 s slot that repeats every 3 minutes.
