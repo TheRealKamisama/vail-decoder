@@ -420,9 +420,9 @@ enum { WT_GENERIC = 0, WT_DICT, WT_REPORT, WT_PROSIGN, WT_QRL, WT_CALL };
 
 typedef struct {
     uint8_t charCode;
+    uint8_t lowSnr;          /* beside charCode, so that confidence costs no padding */
     int32_t wordType;
     int32_t elementOrdinal;
-    uint8_t lowSnr;
     float wordSpaceProb;
     int32_t wordEnd;
     float confidence;        /* nats by which the decoder preferred this character to its best alternative (CVD), or
@@ -477,29 +477,38 @@ float chr_table_weight(int i);
 #define CVD_LM_ORDER     3           /* 2: character bigram, 3: trigram */
 #endif
 #define CVD_OUT_MAX      64
-/* tuning: each code's confidence is a margin taken CVD_CONF_DELAY frames after it ends (or when it is committed, if that
- * is sooner): the score of the best state whose path has this code, over the best one whose path has another code there
- * or none (the same code ending more than CVD_CONF_TOL frames away counts as another). Later, the survivors have mostly
- * merged into one history and the competitors are gone. lowSnr is set below CVD_CONF_DOUBT. 0 leaves both at the CHR
- * defaults (confident, lowSnr 0). Decoding does not depend on it. */
+/* tuning: each code's confidence is a margin taken CVD_CONF_DELAY units (STA's dot length, but no less than
+ * CVD_CONF_DELAY_MIN frames: fast keying still gains from the time) after it ends, or when it is committed if that is
+ * sooner: the score of the best state whose path has this code, over the best one whose path has
+ * another code there or none (the same code ending more than CVD_CONF_TOL units away counts as another). Later, the
+ * survivors have mostly merged into one history and the competitors are gone. lowSnr is set below CVD_CONF_DOUBT. 0 leaves
+ * both at the CHR defaults (confident, lowSnr 0). Decoding does not depend on it. */
 #ifndef CVD_TUNE_CONF
 #define CVD_TUNE_CONF    1
 #endif
 #ifndef CVD_CONF_DELAY
-#define CVD_CONF_DELAY   20
+#define CVD_CONF_DELAY   3.5         /* units */
 #endif
 #ifndef CVD_CONF_TOL
-#define CVD_CONF_TOL     8
+#define CVD_CONF_TOL     1.5         /* units */
+#endif
+#ifndef CVD_CONF_DELAY_MIN
+#define CVD_CONF_DELAY_MIN 20        /* frames */
+#endif
+#ifndef CVD_CONF_TOL_MIN
+#define CVD_CONF_TOL_MIN   2         /* frames */
 #endif
 #ifndef CVD_CONF_DOUBT
 #define CVD_CONF_DOUBT   3.0f
 #endif
 #define CVD_WP_MAX       400
 
-typedef struct { int32_t parent, step; int16_t value; uint8_t isGap, mark; float conf; } CvdNode;   /* conf: of a code,
-                                                                                                * CVD_CONF_UNSET until scored */
-#define CVD_CONF_UNSET   (-1e30f)
-#define CVD_CONF_RING    128         /* > CVD_CONF_DELAY */
+/* conf: a code's confidence in hundredths of a nat, CVD_CONF_UNSET until scored; memo: whether the node's path has the
+ * code of the confidence query numbered memoEpoch */
+typedef struct { int32_t parent, step; int16_t value; uint8_t isGap, mark; int16_t conf; uint8_t memoEpoch, memo; } CvdNode;
+#define CVD_CONF_UNSET   (-1)
+#define CVD_CONF_SCALE   100.0f
+#define CVD_CONF_RING    128         /* frames of codes waiting to be scored; the delay is clamped below CVD_LAG */
 
 typedef struct {
     float markEnd[2][CVD_MARK_MAX + 1], markCont[2][CVD_MARK_MAX + 1];   /* dot / dash hazards (log) */
@@ -518,9 +527,10 @@ typedef struct {
     int step;                /* SEG step of the next frame */
     Char out[CVD_OUT_MAX];
     int outCount;
-    int32_t confRing[CVD_CONF_RING]; /* the code node created at each recent step, -1 if none */
-    int8_t confMemo[CVD_POOL];       /* code_margin's scratch: whether a node's path has the code, -1 unknown */
-    int16_t confStack[CVD_POOL];
+    int16_t confRing[CVD_CONF_RING]; /* the code node created at each recent step, -1 if none */
+    int32_t confNext;                /* the next step whose code is to be scored */
+    int confDelay, confTol;          /* CVD_CONF_DELAY and CVD_CONF_TOL in frames, at STA's speed */
+    uint8_t confEpoch;               /* number of the current confidence query (node memo) */
 } Cvd;
 
 void cvd_init(Cvd *v);

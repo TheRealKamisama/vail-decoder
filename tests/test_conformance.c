@@ -326,29 +326,19 @@ static int cvd_decode_conf(Cvd *v, const Sta *sta, const SegObs *o, int n, char 
     for (i = 0; i < n; i++) {
         cvd_update(v, &o[i]);
         cvd_commit(v, i == n - 1, sta);
-        for (j = 0; j < v->outCount && m < 63; j++, m++) {
+        for (j = 0; j < v->outCount && m < 62; j++, m++) {
             got[m] = (char)v->out[j].charCode;
             conf[m] = v->out[j].confidence;
-            if (v->out[j].lowSnr != (v->out[j].confidence < CVD_CONF_DOUBT)) return -1;
+            if (v->out[j].lowSnr != (v->out[j].confidence < CVD_CONF_DOUBT)) { got[m + 1] = 0; return -1; }
         }
     }
     got[m] = 0;
     return m;
 }
 
-static float conf_min(Cvd *v, const Sta *sta, const SegObs *o, int n)
-{
-    char got[64];
-    float conf[64], lo = CHAR_CONF_MAX;
-    int m = cvd_decode_conf(v, sta, o, n, got, conf), i;
-    if (m < 0) return -1.0f;
-    for (i = 0; i < m; i++) if (conf[i] < lo) lo = conf[i];
-    return lo;
-}
-
 /* CVD_TUNE_CONF: blurring the one-unit gap inside the first A of PARIS (key-down log-odds a little above 0) leaves A
  * against one long mark to the timing alone; that character's confidence drops (7.3 -> 5.1 nats), and the others'
- * stay above CVD_CONF_DOUBT. Filled in further, the gap reads as one mark (T) and is still doubted. */
+ * stay above CVD_CONF_DOUBT. Filled in further, the gap reads as one mark (T), whose confidence drops too (3.7). */
 static void test_cvd_conf(void)
 {
     static SegObs o[4000], blur[4000];
@@ -392,23 +382,18 @@ static void test_cvd(void)
     for (ti = 0; ti < sizeof texts / sizeof texts[0]; ti++) {
         double wpm = 18.0 + 6.0 * ti;
         char got[64], want[64];
-        int n = keyed_obs(texts[ti], wpm, o, 4000), i, m = 0, kb;
+        float conf[64], lo = CHAR_CONF_MAX;
+        int n = keyed_obs(texts[ti], wpm, o, 4000), i, m, kb;
         const char *q;
         sta_init(&sta);
         for (i = 0; i < 5; i++) sta.means[i] = (float)log(112.94 / wpm * (i == 1 || i == 3 ? 3.0 : (i == 4 ? 7.0 : 1.0)));
-        cvd_init(v);
-        cvd_set_model(v, &sta);
-        for (i = 0; i < n; i++) {
-            int j;
-            cvd_update(v, &o[i]);
-            cvd_commit(v, i == n - 1, &sta);
-            for (j = 0; j < v->outCount && m < 63; j++) got[m++] = (char)v->out[j].charCode;
-        }
-        got[m] = 0;
+        m = cvd_decode_conf(v, &sta, o, n, got, conf);
+        CHECK(m >= 0, "CVD lowSnr disagrees with confidence in '%s'", got);
+        for (i = 0; i < m; i++) if (conf[i] < lo) lo = conf[i];
         for (q = texts[ti], m = 0; *q; q++) if (*q != ' ') want[m++] = *q;
         want[m] = 0;
         CHECK(!strcmp(got, want), "CVD decoded '%s' want '%s'", got, want);
-        CHECK(conf_min(v, &sta, o, n) >= CVD_CONF_DOUBT, "CVD doubts clean keying of '%s'", texts[ti]);
+        CHECK(lo >= CVD_CONF_DOUBT, "CVD confidence %g on clean keying of '%s'", lo, texts[ti]);
         spd_init(p);
         for (i = 0; i < n; i++) spd_update(p, &o[i]);
         kb = spd_best(p);

@@ -27,11 +27,15 @@ THRESHOLDS = [0.5, 1, 2, 3, 5, 8, 12, 16, 20, 30]
 def decode(build, wav):
     out = subprocess.run([os.path.join(build, "vail_decode"), "-m", "-q", wav], check=True, capture_output=True,
                          text=True).stdout
-    # the host text may hold the API's synthetic newline (a channel switch); the confidences are the last line
+    # the confidences are the last line; the host text may hold the newline and '>' the API inserts on a channel switch
     text, _, last = out[:-1].rpartition("\n")
     confs = [float(x) for x in last.split()]
-    pairs, prev_space = [], True
+    pairs, prev_space, after_newline = [], True, False
     for ch, c in zip(text, confs):                  # upper-cased, runs of spaces collapsed, as weak.norm
+        if after_newline and ch == ">":             # the API's mark, not decoded text
+            after_newline = False
+            continue
+        after_newline = ch == "\n"
         if ch.isspace():
             if not prev_space:
                 pairs.append((" ", c))
@@ -121,6 +125,9 @@ def main():
         groups = [("all Morse", [r for (c, _), r in zip(work, res) if c])]
         for snr in snrs:
             groups.append((f"{snr} dB", [r for (c, _), r in zip(work, res) if c and c["snr"] == snr]))
+        if len(wpms) > 1:
+            for w in wpms:
+                groups.append((f"{w} WPM", [r for (c, _), r in zip(work, res) if c and c["wpm"] == w]))
         if wavs_extra:
             groups.append(("no Morse", [r for (c, _), r in zip(work, res) if not c]))
         print(f"{'':>10s} {'right':>6s} {'wrong':>6s} {'AUC':>6s}   wrong / right faded below " +

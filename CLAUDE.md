@@ -126,9 +126,10 @@ FE → BCM → for each channel: SIG{ SPM → ENV → SEG ⇄ STA (⇄ SPD) → 
 - `SPD_TUNE_MORSE` (on by default) only reports: on the same `SegObs`, `SPD` also runs the standard timing at STA's
   speed and models of keying that is not Morse, and the leaky log-likelihood margin between them is
   `vail_channel_confidence`. Decoding must not depend on it: `vail_decode` output is byte-identical with it off.
-- `CVD_TUNE_CONF` (on by default) also only reports: `CVD` scores each code `CVD_CONF_DELAY` frames after it ends, as the best
-  state whose path has it over the best whose path has not (`code_margin`), into `vail_char.confidence`; `lowSnr` is that below
-  `CVD_CONF_DOUBT`. Scoring at commit is no use, because the survivors have merged by then (`docs/char-confidence.md`).
+- `CVD_TUNE_CONF` (on by default) also only reports: `CVD` scores each code 3.5 units (at STA's speed, at least 20 frames:
+  `CVD_CONF_DELAY`, `CVD_CONF_DELAY_MIN`, set in `cvd_set_model`) after it ends, as the best state whose path has it over the
+  best whose path has not (`code_margin`), into `vail_char.confidence`; `lowSnr` is that below `CVD_CONF_DOUBT`. Scoring at
+  commit is no use, because the survivors have merged by then (`docs/char-confidence.md`).
 
 ## Code layout
 

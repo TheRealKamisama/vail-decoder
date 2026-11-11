@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* CVD — character Viterbi decoder (see vail_internal.h). */
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,6 +121,15 @@ static void class_pmf(const Sta *sta, int c0, int c1, double *q)
     for (i = 1; i <= CAP; i++) q[i] /= z;
 }
 
+/* CVD_CONF_DELAY and CVD_CONF_TOL in frames at wpm */
+static void conf_timing(Cvd *v, double wpm)
+{
+    double unit = 1200.0 / 10.625 / (wpm > 1.0 ? wpm : 1.0);        /* frames per dot */
+    int d = (int)(CVD_CONF_DELAY * unit + 0.5), t = (int)(CVD_CONF_TOL * unit + 0.5);
+    v->confDelay = d < CVD_CONF_DELAY_MIN ? CVD_CONF_DELAY_MIN : (d > CVD_LAG - 1 ? CVD_LAG - 1 : d);
+    v->confTol = t < CVD_CONF_TOL_MIN ? CVD_CONF_TOL_MIN : t;
+}
+
 void cvd_set_model(Cvd *v, const Sta *sta)
 {
     double q[CAP + 1];
@@ -133,6 +143,7 @@ void cvd_set_model(Cvd *v, const Sta *sta)
     class_pmf(sta, 1, 1, q); hazards(q, CVD_MARK_MAX, v->markEnd[1], v->markCont[1]);
     class_pmf(sta, 2, 2, q); hazards(q, CVD_GAP_MAX, v->gapEnd, v->gapCont);
     class_pmf(sta, 3, 4, q); hazards(q, CVD_CGAP_MAX, v->cgapEnd, v->cgapCont);
+    conf_timing(v, sta_speed(sta));
 }
 
 /* ---- history pool */
@@ -173,7 +184,12 @@ static void pool_gc(Cvd *v)
     }
     v->freeCount = 0;
     for (i = CVD_POOL - 1; i >= 0; i--)
-        if (!v->pool[i].mark) { v->pool[i].parent = v->freeHead; v->freeHead = i; v->freeCount++; }
+        if (!v->pool[i].mark) {
+            v->pool[i].parent = v->freeHead;
+            v->pool[i].step = INT32_MIN;                  /* not scored by conf_frame */
+            v->freeHead = i;
+            v->freeCount++;
+        }
 }
 
 /* (collection runs at the start of a frame, never here: live histories may sit in locals) */
@@ -190,6 +206,7 @@ static int32_t node_new(Cvd *v, int32_t parent, int isGap, int value)
     v->pool[i].isGap = (uint8_t)isGap;
     v->pool[i].mark = 0;
     v->pool[i].conf = CVD_CONF_UNSET;
+    v->pool[i].memoEpoch = 0;
     return i;
 }
 
@@ -208,12 +225,14 @@ void cvd_reset(Cvd *v, int step)
     v->committedStep = step - 1;
     v->outCount = 0;
     for (d = 0; d < CVD_CONF_RING; d++) v->confRing[d] = -1;
+    v->confNext = step;
 }
 
 void cvd_init(Cvd *v)
 {
     if (!g_nTrie) build_trie();
     memset(v, 0, sizeof *v);
+    conf_timing(v, 23.16);                                    /* STA's prior speed, until cvd_set_model */
     cvd_reset(v, 0);
 }
 
@@ -339,7 +358,7 @@ void cvd_update(Cvd *v, const SegObs *o)
         }
         v->cgap[1] = bestChar + f;
         v->cgapH[1] = bestChar > NEG / 2 ? node_new(v, bestCharH, 0, g_trie[bestCharNode].chr) : -1;
-        v->confRing[CONF_SLOT(v->step)] = v->cgapH[1] != bestCharH ? v->cgapH[1] : -1;
+        v->confRing[CONF_SLOT(v->step)] = (int16_t)(v->cgapH[1] != bestCharH ? v->cgapH[1] : -1);
     }
 
     /* 4. renormalise */
@@ -373,22 +392,34 @@ static int32_t best_history(const Cvd *v)
 }
 
 /* ---- confidence of a code (CVD_TUNE_CONF) */
-typedef char cvd_conf_ring_fits[CVD_CONF_DELAY < CVD_CONF_RING ? 1 : -1];
+typedef char cvd_conf_ring_fits[CVD_LAG < CVD_CONF_RING ? 1 : -1];
 
-/* whether the path of history h has code chr ending within CVD_CONF_TOL frames of step end (memoised per node for one
- * query in confMemo) */
+/* starts a query: node memos of earlier queries no longer count */
+static void memo_begin(Cvd *v)
+{
+    if (++v->confEpoch == 0) {
+        int i;
+        for (i = 0; i < CVD_POOL; i++) v->pool[i].memoEpoch = 0;
+        v->confEpoch = 1;
+    }
+}
+
+/* whether the path of history h has code chr ending within confTol frames of step end; the answer is memoised on every
+ * node walked, for the rest of the query */
 static int has_code(Cvd *v, int32_t h, int chr, int32_t end)
 {
-    int n = 0, r = 0, i;
-    while (h >= 0 && v->pool[h].step >= end - CVD_CONF_TOL && n < CVD_POOL) {
-        const CvdNode *c = &v->pool[h];
-        if (v->confMemo[h] >= 0) { r = v->confMemo[h]; break; }
-        if (!c->isGap && c->value == chr && c->step <= end + CVD_CONF_TOL) { r = 1; break; }
-        v->confStack[n++] = (int16_t)h;
-        h = c->parent;
+    int32_t x, stop = -1, lo = end - v->confTol;
+    int r = 0;
+    for (x = h; x >= 0 && v->pool[x].step >= lo; x = v->pool[x].parent) {
+        const CvdNode *c = &v->pool[x];
+        if (c->memoEpoch == v->confEpoch) { r = c->memo; stop = x; break; }
+        if (!c->isGap && c->value == chr && c->step <= end + v->confTol) { r = 1; break; }
     }
-    for (i = 0; i < n; i++) v->confMemo[v->confStack[i]] = (int8_t)r;
-    if (h >= 0 && v->confMemo[h] < 0 && r) v->confMemo[h] = 1;
+    for (x = h; x >= 0 && x != stop && v->pool[x].step >= lo; x = v->pool[x].parent) {
+        v->pool[x].memoEpoch = v->confEpoch;
+        v->pool[x].memo = (uint8_t)r;
+        if (r && !v->pool[x].isGap && v->pool[x].value == chr && v->pool[x].step <= end + v->confTol) break;
+    }
     return r;
 }
 
@@ -400,12 +431,14 @@ static void margin_state(Cvd *v, float sc, int32_t h, int chr, int32_t end, floa
 }
 
 /* the score of the best state now whose path has code chr ending at step end, over the best state whose path has not:
- * by how much the decoder prefers chr there, in nats, clamped to [0, CHAR_CONF_MAX] */
+ * by how much the decoder prefers chr there, in nats, clamped to [0, CHAR_CONF_MAX]. If the best state's path has not,
+ * that is 0 without looking further. */
 static float code_margin(Cvd *v, int chr, int32_t end)
 {
     float agree = NEG, other = NEG, m;
     int n, d;
-    memset(v->confMemo, -1, sizeof v->confMemo);
+    memo_begin(v);
+    if (!has_code(v, best_history(v), chr, end)) return 0.0f;
     for (d = 1; d <= CVD_CGAP_MAX; d++) margin_state(v, v->cgap[d], v->cgapH[d], chr, end, &agree, &other);
     for (n = 1; n < g_nTrie; n++) {
         for (d = 1; d <= CVD_MARK_MAX; d++) margin_state(v, v->mark[n][d], v->markH[n][d], chr, end, &agree, &other);
@@ -417,13 +450,21 @@ static float code_margin(Cvd *v, int chr, int32_t end)
     return m < 0.0f ? 0.0f : (m > CHAR_CONF_MAX ? CHAR_CONF_MAX : m);
 }
 
-/* scores the code that ended CVD_CONF_DELAY frames ago, if it is still in the pool */
+static void conf_store(CvdNode *c, float m) { c->conf = (int16_t)(m * CVD_CONF_SCALE + 0.5f); }
+
+/* scores the codes that ended confDelay frames ago or before and are not scored yet (the delay may have shrunk with a
+ * new model), if they are still in the pool */
 static void conf_frame(Cvd *v)
 {
-    int32_t t = v->step - CVD_CONF_DELAY, i = v->confRing[CONF_SLOT(t)];
-    v->confRing[CONF_SLOT(t)] = -1;
-    if (i >= 0 && v->pool[i].step == t && !v->pool[i].isGap && v->pool[i].conf == CVD_CONF_UNSET)
-        v->pool[i].conf = code_margin(v, v->pool[i].value, t);
+    int32_t last = v->step - v->confDelay;
+    if (v->confNext < last - (CVD_CONF_RING - 1)) v->confNext = last - (CVD_CONF_RING - 1);
+    for (; v->confNext <= last; v->confNext++) {
+        int32_t t = v->confNext;
+        int i = v->confRing[CONF_SLOT(t)];
+        v->confRing[CONF_SLOT(t)] = -1;
+        if (i >= 0 && v->pool[i].step == t && !v->pool[i].isGap && v->pool[i].conf == CVD_CONF_UNSET)
+            conf_store(&v->pool[i], code_margin(v, v->pool[i].value, t));
+    }
 }
 
 static void emit_code(Cvd *v, int chr, int32_t anchor, int gapLen, int last, const Sta *sta, float conf)
@@ -451,13 +492,13 @@ static void emit_code(Cvd *v, int chr, int32_t anchor, int gapLen, int last, con
     }
 }
 
-/* the confidence a code is committed with: its score from conf_frame, or, younger than CVD_CONF_DELAY, one taken now */
+/* the confidence a code is committed with: its score from conf_frame, or, younger than the delay, one taken now */
 static float commit_conf(Cvd *v, int32_t node)
 {
     CvdNode *c = &v->pool[node];
     if (!CVD_TUNE_CONF) return CHAR_CONF_MAX;
-    if (c->conf == CVD_CONF_UNSET) c->conf = code_margin(v, c->value, c->step);
-    return c->conf;
+    if (c->conf == CVD_CONF_UNSET) conf_store(c, code_margin(v, c->value, c->step));
+    return c->conf / CVD_CONF_SCALE;
 }
 
 void cvd_commit(Cvd *v, int flush, const Sta *sta)

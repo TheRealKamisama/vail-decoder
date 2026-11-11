@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define VAIL_VERSION       "0.1.0"   /* the engine's version; hosts built separately can ask with vail_version() */
+#define VAIL_VERSION       "0.2.0"   /* the engine's version; hosts built separately can ask with vail_version() */
 
 #define VAIL_N_BINS        128   /* Spectrum length */
 #define VAIL_HOP_SAMPLES   85    /* new samples per frame @ 8000 Hz */
@@ -36,8 +36,9 @@ const float *vail_fe_process(vail_fe *fe, const int16_t *samples);
 
 /* Host-visible character object (09 §2.10). confidence (an extension) says how sure the decoder was of this character:
  * how much more likely, as a log-odds in nats, the text it chose is than the best text that has another character here
- * or none, given everything heard up to the moment the character was committed. Around 0 it nearly chose otherwise; it
- * is capped at VAIL_CONF_MAX, which spaces and characters with no doubt at all get. A host can fade a character by it.
+ * or none, given what was heard up to three and a half dots (at least 0.2 s) after the character ended: before it is
+ * committed, while the alternatives are still open. Around 0 it nearly chose otherwise, or chose otherwise then; it is capped at
+ * VAIL_CONF_MAX, which spaces and characters with no doubt at all get. A host can fade a character by it.
  * lowSnr is 1 where confidence is below a default threshold, for hosts that want one bit. Both are fixed once the
  * character is first given out; a revised character comes back with its own. */
 typedef struct {
